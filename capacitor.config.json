@@ -1,0 +1,9 @@
+{
+  "appId": "com.commandconsole.app",
+  "appName": "Command Console",
+  "webDir": "public",
+  "server": {
+    "url": "https://fearless-leader.web.app",
+    "cleartext": true
+  }
+}

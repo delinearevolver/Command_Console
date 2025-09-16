@@ -1,0 +1,33 @@
+{
+  "name": "command-console",
+  "version": "1.0.0",
+  "description": "Desktop client for the Command Console",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "Your Name",
+  "license": "ISC",
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "electron": "^38.1.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.commandconsole.app",
+    "productName": "Command Console",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/ios": "^7.4.3"
+  }
+}
