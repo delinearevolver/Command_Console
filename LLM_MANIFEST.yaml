@@ -1,20 +1,19 @@
 ﻿project: command-console
 immutable_paths:
   - .firebaserc
-  - firebase.json
   - functions/**
-  - public/index.html
   - src/core/**
   - src/state/**
 editable_paths:
+  - firebase.json
   - public/**
   - src/components/**
-  - src/modules/**
+  - src/modules**
   - src/pages/**
 protected_regions:
   start: "// <keep>"
   end: "// </keep>"
 contracts:
-  firebase: "Hosting config in firebase.json; do not change public dir without ADR"
+  firebase: "Hosting serves built assets from /dist; SPA rewrite to /index.html"
   router:   "If using React Router, route IDs are stable under src/core/**"
   state:    "Public selectors are API under src/state/**"
