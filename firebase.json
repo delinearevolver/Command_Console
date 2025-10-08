@@ -1,8 +1,20 @@
 ﻿{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": {
+    "source": "functions"
+  },
   "hosting": {
     "public": "dist",
-    "ignore": ["**/.*","**/node_modules/**"],
+    "ignore": ["**/.*", "**/node_modules/**"],
     "cleanUrls": true,
-    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
   }
 }

@@ -4,13 +4,28 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 const {onCall} = require("firebase-functions/v2/https");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler"); // Modern syntax for scheduled functions
 const {initializeApp} = require("firebase-admin/app");
-const {getFirestore} = require("firebase-admin/firestore");
+const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {google} = require("googleapis");
 const functions = require("firebase-functions");
 
 initializeApp();
+
+// Helper to remove undefined values from objects for Firestore
+const cleanForFirestore = (obj) => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(cleanForFirestore).filter(x => x !== undefined);
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value);
+    }
+  }
+  return cleaned;
+};
 
 // Helper function to initialize OAuth2 client
 const getOauth2Client = () => {
@@ -151,4 +166,226 @@ exports.syncCalendarEvents = onSchedule("every 15 minutes", async (event) => {
     }
   }
   return null;
+});const buildLedgerConfig = () => {
+  const defaults = {
+    baseUrl: (process.env.LEDGER_API_BASE || '').trim(),
+    seller: {
+      name: (process.env.LEDGER_SELLER_NAME || '').trim() || 'CMQUO Limited',
+      line1: (process.env.LEDGER_SELLER_ADDRESS_LINE1 || '').trim(),
+      city: (process.env.LEDGER_SELLER_ADDRESS_CITY || '').trim(),
+      postcode: (process.env.LEDGER_SELLER_ADDRESS_POSTCODE || '').trim(),
+      country: ((process.env.LEDGER_SELLER_ADDRESS_COUNTRY || 'GB')).trim().toUpperCase(),
+    },
+  };
+
+  const config = {}; // Removed functions.config() - using process.env directly
+  const value = (src, fallback) => {
+    if (typeof src === 'string' && src.trim() && src.trim().toLowerCase() !== 'y') {
+      return src.trim();
+    }
+    if (typeof fallback === 'string') {
+      return fallback.trim();
+    }
+    return fallback;
+  };
+
+  const resolvedBaseUrl = value(config.api_base, defaults.baseUrl);
+  return {
+    baseUrl: resolvedBaseUrl,
+    seller: {
+      name: value(config.seller_name, defaults.seller.name),
+      line1: value(config.seller_address_line1, defaults.seller.line1),
+      city: value(config.seller_address_city, defaults.seller.city),
+      postcode: value(config.seller_address_postcode, defaults.seller.postcode),
+      country: value(config.seller_address_country, defaults.seller.country).toUpperCase() || 'GB',
+    },
+  };
+};
+
+const normaliseLines = (invoiceDoc) => {
+  const raw = Array.isArray(invoiceDoc.lineItems) ? invoiceDoc.lineItems : [];
+  return raw
+    .map((line, idx) => {
+      const qty = Number(line.quantity ?? line.qty ?? 0);
+      const unitPrice = Number(line.unitPrice ?? 0);
+      if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice)) {
+        return null;
+      }
+      const taxRate = line.taxRate === undefined ? undefined : Number(line.taxRate);
+      return {
+        lineNo: idx + 1,
+        description: line.description || line.name || line.sku || `Line ${idx + 1}`,
+        qty,
+        unitPrice,
+        taxRate: Number.isFinite(taxRate) ? taxRate : undefined,
+      };
+    })
+    .filter(Boolean);
+};
+
+const computeTotals = (invoiceDoc, lines) => {
+  const totals = typeof invoiceDoc.totals === 'object' && invoiceDoc.totals !== null ? invoiceDoc.totals : {};
+  let net = Number(totals.net);
+  let tax = Number(totals.tax);
+  let gross = Number(totals.gross);
+
+  if (![net, tax, gross].every(Number.isFinite)) {
+    net = 0;
+    tax = 0;
+    for (const line of lines) {
+      const lineNet = line.qty * line.unitPrice;
+      net += lineNet;
+      if (line.taxRate) {
+        tax += lineNet * (line.taxRate / 100);
+      }
+    }
+    gross = net + tax;
+  }
+
+  return {
+    net: Number(net.toFixed(2)),
+    tax: Number(tax.toFixed(2)),
+    gross: Number(gross.toFixed(2)),
+  };
+};
+
+const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
+
+exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (event) => {
+  if (!event.data) {
+    return;
+  }
+
+  const { baseUrl, seller } = buildLedgerConfig();
+  const invoiceRef = event.data.after.ref;
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    functions.logger.warn('Ledger API base URL not configured; skipping sync.', { invoiceId: event.params.invoiceId });
+    await invoiceRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const invoice = event.data.after.data();
+  const invoiceId = (invoice.invoiceId || invoice.reference || event.params.invoiceId || '').toString().trim();
+  const issueDate = invoice.issueDate || new Date().toISOString().slice(0, 10);
+  const dueDate = invoice.dueDate ? invoice.dueDate : undefined;
+  const currency = (invoice.currency || 'GBP').toUpperCase();
+
+  const lines = normaliseLines(invoice);
+  if (lines.length === 0) {
+    functions.logger.error('Invoice has no billable lines; cannot sync to ledger.', { invoiceId });
+    await invoiceRef.set({
+      syncStatus: 'error',
+      syncMessage: 'No valid invoice lines to post',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const totals = computeTotals(invoice, lines);
+
+  const customerId = invoice.customerId || null;
+  let customer;
+  if (customerId) {
+    try {
+      const snapshot = await getFirestore().collection('customers').doc(customerId).get();
+      if (snapshot.exists) {
+        customer = snapshot.data();
+      }
+    } catch (error) {
+      functions.logger.error('Unable to fetch customer for invoice', { invoiceId, customerId, error });
+    }
+  }
+
+  const buyerName = invoice.customerName || customer?.name || 'Unknown customer';
+  const addressSource = invoice.customerAddress || customer?.billingAddress || '';
+  const normalizedAddress = Array.isArray(addressSource)
+    ? addressSource.join('\n')
+    : String(addressSource || '');
+  const addressParts = normalizedAddress
+    .replace(/\r+/g, '')
+    .split('\n')
+    .flatMap((line) => line.split(','))
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  const buyerAddress = {
+    line1: addressParts[0] || '',
+    city: addressParts[1] || '',
+    postcode: addressParts[2] || '',
+    country: (customer?.country || invoice.customerCountry || seller.country || 'GB').toUpperCase(),
+  };
+
+  const payload = {
+    invoiceId: invoiceId || event.params.invoiceId,
+    issueDate,
+    currency,
+    buyer: {
+      name: buyerName,
+      address: buyerAddress,
+    },
+    seller: {
+      name: seller.name,
+      address: {
+        line1: seller.line1,
+        city: seller.city,
+        postcode: seller.postcode,
+        country: seller.country,
+      },
+    },
+    lines,
+    totals,
+  };
+
+  if (dueDate) {
+    payload.dueDate = dueDate;
+  }
+
+  functions.logger.info('Posting invoice to ledger', {
+    invoiceId: payload.invoiceId,
+    apiUrl: trimTrailingSlash(baseUrl) + '/invoices',
+    lineCount: lines.length,
+    totals,
+  });
+
+  try {
+    const response = await fetch(trimTrailingSlash(baseUrl) + '/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    functions.logger.info('Ledger response received', { invoiceId: payload.invoiceId, status: response.status });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected invoice', { invoiceId: payload.invoiceId, status: response.status, body });
+      await invoiceRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    await invoiceRef.set({
+      syncStatus: 'synced',
+      syncedAt: FieldValue.serverTimestamp(),
+      ledgerInvoiceId: payload.invoiceId,
+    }, { merge: true });
+    functions.logger.info('Invoice synced to ledger', { invoiceId: payload.invoiceId });
+  } catch (error) {
+    functions.logger.error('Failed to sync invoice to ledger', { invoiceId: payload.invoiceId, error });
+    await invoiceRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
 });
