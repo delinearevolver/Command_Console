@@ -1,0 +1,547 @@
+﻿[
+  {
+    "httpRequest": {
+      "latency": "0.032855576s",
+      "protocol": "HTTP/1.1",
+      "remoteIp": "34.98.142.97",
+      "requestMethod": "POST",
+      "requestSize": "2853",
+      "requestUrl": "https://syncinvoicetoledger-qbnqkrdzzq-uc.a.run.app/?__GCP_CloudEventsMode=CE_PUBSUB_BINDING",
+      "responseSize": "82",
+      "serverIp": "34.143.75.2",
+      "status": 200,
+      "userAgent": "APIs-Google; (+https://developers.google.com/webmasters/APIs-Google.html)"
+    },
+    "insertId": "68dfadf90003520b77f4bf5d",
+    "labels": {
+      "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+      "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+      "goog-drz-cloudfunctions-location": "us-central1",
+      "goog-managed-by": "cloudfunctions",
+      "instanceId": "0069c7a988d3e90fbe35417014a1b3b6c8844eb28d925f91e452ca09d0ff3bc2380160ab4963220879b4a1912c0e31bc3345820d3bf73e6dcf69b8a63fa48a4ca1d5cb7d6b567961db2776aa75b633",
+      "run.googleapis.com/cloud_event_id": "1df7ecd2-80c0-4929-b303-93adb69c1c79",
+      "run.googleapis.com/cloud_event_source": "//firestore.googleapis.com/projects/fearless-leader/databases/(default)"
+    },
+    "logName": "projects/fearless-leader/logs/run.googleapis.com%2Frequests",
+    "receiveTimestamp": "2025-10-03T11:05:29.223259295Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "syncinvoicetoledger",
+        "location": "us-central1",
+        "project_id": "fearless-leader",
+        "revision_name": "syncinvoicetoledger-00019-j8d",
+        "service_name": "syncinvoicetoledger"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "spanId": "cb346b1e5f40a10a",
+    "timestamp": "2025-10-03T11:05:29.169847Z",
+    "trace": "projects/fearless-leader/traces/0d3e8fe38ef68c4463b604198703878c",
+    "traceSampled": true
+  },
+  {
+    "insertId": "vn3ntkdqd52",
+    "logName": "projects/fearless-leader/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "methodName": "/Services.ReplaceService",
+      "resourceName": "namespaces/fearless-leader/services/syncinvoicetoledger",
+      "response": {
+        "@type": "type.googleapis.com/google.cloud.run.v1.Service",
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {
+            "cloudfunctions.googleapis.com/function-id": "syncInvoiceToLedger",
+            "run.googleapis.com/build-base-image": "us-central1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs22",
+            "run.googleapis.com/build-enable-automatic-updates": "true",
+            "run.googleapis.com/build-environment-variables": "{\"GOOGLE_NODE_RUN_SCRIPTS\":\"\"}",
+            "run.googleapis.com/build-function-target": "syncInvoiceToLedger",
+            "run.googleapis.com/build-image-uri": "us-central1-docker.pkg.dev/fearless-leader/gcf-artifacts/fearless--leader__us--central1__sync_invoice_to_ledger:version_1",
+            "run.googleapis.com/build-name": "projects/891476346781/locations/us-central1/builds/861f2d53-5570-47d5-8706-366e4f67f724",
+            "run.googleapis.com/build-service-account": "projects/fearless-leader/serviceAccounts/891476346781-compute@developer.gserviceaccount.com",
+            "run.googleapis.com/build-source-location": "gs://gcf-v2-sources-891476346781-us-central1/syncInvoiceToLedger/function-source.zip#1759489256202654",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "541.0.0",
+            "run.googleapis.com/custom-audiences": "[\"https://us-central1-fearless-leader.cloudfunctions.net/syncInvoiceToLedger\"]",
+            "run.googleapis.com/ingress": "all",
+            "run.googleapis.com/ingress-status": "all",
+            "run.googleapis.com/operation-id": "fdaa52f4-f8d8-4d44-9df9-e1e33ab7b14f",
+            "run.googleapis.com/urls": "[\"https://syncinvoicetoledger-891476346781.us-central1.run.app\",\"https://us-central1-fearless-leader.cloudfunctions.net/syncInvoiceToLedger\",\"https://syncinvoicetoledger-qbnqkrdzzq-uc.a.run.app\"]",
+            "serving.knative.dev/creator": "service-891476346781@gcf-admin-robot.iam.gserviceaccount.com",
+            "serving.knative.dev/lastModifier": "delinearevolver@gmail.com"
+          },
+          "creationTimestamp": "2025-10-01T14:46:56.145686Z",
+          "generation": 19,
+          "labels": {
+            "cloud.googleapis.com/location": "us-central1",
+            "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+            "goog-cloudfunctions-runtime": "nodejs22",
+            "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+            "goog-drz-cloudfunctions-location": "us-central1",
+            "goog-managed-by": "cloudfunctions"
+          },
+          "name": "syncinvoicetoledger",
+          "namespace": "891476346781",
+          "resourceVersion": "AAZAPxDIiv4",
+          "selfLink": "/apis/serving.knative.dev/v1/namespaces/891476346781/services/syncinvoicetoledger",
+          "uid": "9219e2fc-d874-40f6-ab94-a259eac4b613"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/maxScale": "20",
+                "cloudfunctions.googleapis.com/trigger-type": "google.cloud.firestore.document.v1.created",
+                "run.googleapis.com/base-images": "{\"worker\":\"us-central1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs22\"}",
+                "run.googleapis.com/client-name": "gcloud",
+                "run.googleapis.com/client-version": "541.0.0",
+                "run.googleapis.com/startup-cpu-boost": "true"
+              },
+              "labels": {
+                "client.knative.dev/nonce": "bdrvpdvsln",
+                "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+                "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+                "goog-drz-cloudfunctions-location": "us-central1",
+                "run.googleapis.com/startupProbeType": "Default"
+              }
+            },
+            "spec": {
+              "containerConcurrency": 80,
+              "containers": [
+                {
+                  "env": [
+                    {
+                      "name": "LEDGER_API_BASE",
+                      "value": "https://cmquo-api-891476346781.europe-west2.run.app"
+                    },
+                    {
+                      "name": "LEDGER_SELLER_NAME",
+                      "value": "CMQUO Limited"
+                    },
+                    {
+                      "name": "LEDGER_SELLER_ADDRESS_LINE1",
+                      "value": "1 Solar Way"
+                    },
+                    {
+                      "name": "LEDGER_SELLER_ADDRESS_CITY",
+                      "value": "Doncaster"
+                    },
+                    {
+                      "name": "LEDGER_SELLER_ADDRESS_POSTCODE",
+                      "value": "DN1 1AA"
+                    },
+                    {
+                      "name": "LEDGER_SELLER_ADDRESS_COUNTRY",
+                      "value": "GB"
+                    },
+                    {
+                      "name": "PGHOST",
+                      "value": "/cloudsql/fearless-leader:europe-west2:cmquo-ledger-dev"
+                    },
+                    {
+                      "name": "PGPORT",
+                      "value": "5432"
+                    },
+                    {
+                      "name": "PGDATABASE",
+                      "value": "postgres"
+                    },
+                    {
+                      "name": "PGUSER",
+                      "value": "cmquo_app"
+                    },
+                    {
+                      "name": "PGPASSWORD",
+                      "value": "change-me-please"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_API_BASE",
+                      "value": "https://cmquo-api-891476346781.europe-west2.run.app"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_SELLER_NAME",
+                      "value": "CMQUO Limited"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_SELLER_ADDRESS_LINE1",
+                      "value": "1 Solar Way"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_SELLER_ADDRESS_CITY",
+                      "value": "Doncaster"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_SELLER_ADDRESS_POSTCODE",
+                      "value": "DN1 1AA"
+                    },
+                    {
+                      "name": "DEFAULT_LEDGER_SELLER_ADDRESS_COUNTRY",
+                      "value": "GB"
+                    }
+                  ],
+                  "image": "us-central1-docker.pkg.dev/fearless-leader/gcf-artifacts/fearless--leader__us--central1__sync_invoice_to_ledger:version_1",
+                  "name": "worker",
+                  "ports": [
+                    {
+                      "containerPort": 8080,
+                      "name": "http1"
+                    }
+                  ],
+                  "resources": {
+                    "limits": {
+                      "cpu": "1",
+                      "memory": "256Mi"
+                    }
+                  },
+                  "startupProbe": {
+                    "failureThreshold": 1,
+                    "periodSeconds": 240,
+                    "tcpSocket": {
+                      "port": 8080
+                    },
+                    "timeoutSeconds": 240
+                  }
+                }
+              ],
+              "runtimeClassName": "run.googleapis.com/linux-base-image-update",
+              "serviceAccountName": "891476346781-compute@developer.gserviceaccount.com",
+              "timeoutSeconds": 60
+            }
+          },
+          "traffic": [
+            {
+              "latestRevision": true,
+              "percent": 100
+            }
+          ]
+        },
+        "status": {
+          "address": {
+            "url": "https://syncinvoicetoledger-qbnqkrdzzq-uc.a.run.app"
+          },
+          "conditions": [
+            {
+              "lastTransitionTime": "2025-10-03T11:04:28.959486Z",
+              "status": "True",
+              "type": "Ready"
+            },
+            {
+              "severity": "Info",
+              "status": "True",
+              "type": "BaseImageValidated"
+            },
+            {
+              "lastTransitionTime": "2025-10-03T11:04:22.048325Z",
+              "status": "True",
+              "type": "ConfigurationsReady"
+            },
+            {
+              "lastTransitionTime": "2025-10-03T11:04:28.930378Z",
+              "status": "True",
+              "type": "RoutesReady"
+            }
+          ],
+          "latestCreatedRevisionName": "syncinvoicetoledger-00019-j8d",
+          "latestReadyRevisionName": "syncinvoicetoledger-00019-j8d",
+          "observedGeneration": 19,
+          "traffic": [
+            {
+              "latestRevision": true,
+              "percent": 100,
+              "revisionName": "syncinvoicetoledger-00019-j8d"
+            }
+          ],
+          "url": "https://syncinvoicetoledger-qbnqkrdzzq-uc.a.run.app"
+        }
+      },
+      "serviceName": "run.googleapis.com",
+      "status": {
+        "message": "Ready condition status changed to True for Service syncinvoicetoledger."
+      }
+    },
+    "receiveTimestamp": "2025-10-03T11:04:29.879515648Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "",
+        "location": "us-central1",
+        "project_id": "fearless-leader",
+        "revision_name": "",
+        "service_name": "syncinvoicetoledger"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "timestamp": "2025-10-03T11:04:28.973732Z"
+  },
+  {
+    "insertId": "-xsqed2dovl6",
+    "logName": "projects/fearless-leader/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "methodName": "/Services.ReplaceService",
+      "resourceName": "namespaces/fearless-leader/revisions/syncinvoicetoledger-00019-j8d",
+      "response": {
+        "@type": "type.googleapis.com/google.cloud.run.v1.Revision",
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Revision",
+        "metadata": {
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "20",
+            "cloudfunctions.googleapis.com/trigger-type": "google.cloud.firestore.document.v1.created",
+            "run.googleapis.com/base-images": "{\"worker\":\"us-central1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs22\"}",
+            "run.googleapis.com/build-function-target": "{\"worker\":\"syncInvoiceToLedger\"}",
+            "run.googleapis.com/build-id": "{\"worker\":\"861f2d53-5570-47d5-8706-366e4f67f724\"}",
+            "run.googleapis.com/build-source-location": "{\"worker\":\"gs://gcf-v2-sources-891476346781-us-central1/syncInvoiceToLedger/function-source.zip#1759489256202654\"}",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "541.0.0",
+            "run.googleapis.com/operation-id": "fdaa52f4-f8d8-4d44-9df9-e1e33ab7b14f",
+            "run.googleapis.com/startup-cpu-boost": "true",
+            "serving.knative.dev/creator": "delinearevolver@gmail.com"
+          },
+          "creationTimestamp": "2025-10-03T11:04:16.231976Z",
+          "generation": 1,
+          "labels": {
+            "client.knative.dev/nonce": "bdrvpdvsln",
+            "cloud.googleapis.com/location": "us-central1",
+            "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+            "goog-cloudfunctions-runtime": "nodejs22",
+            "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+            "goog-drz-cloudfunctions-location": "us-central1",
+            "goog-managed-by": "cloudfunctions",
+            "run.googleapis.com/startupProbeType": "Default",
+            "serving.knative.dev/configuration": "syncinvoicetoledger",
+            "serving.knative.dev/configurationGeneration": "19",
+            "serving.knative.dev/route": "syncinvoicetoledger",
+            "serving.knative.dev/service": "syncinvoicetoledger",
+            "serving.knative.dev/serviceUid": "9219e2fc-d874-40f6-ab94-a259eac4b613"
+          },
+          "name": "syncinvoicetoledger-00019-j8d",
+          "namespace": "891476346781",
+          "ownerReferences": [
+            {
+              "apiVersion": "serving.knative.dev/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Configuration",
+              "name": "syncinvoicetoledger",
+              "uid": "db3145ff-4aac-4b36-bd84-d4d0527122ef"
+            }
+          ],
+          "resourceVersion": "AAZAPxBeol4",
+          "selfLink": "/apis/serving.knative.dev/v1/namespaces/891476346781/revisions/syncinvoicetoledger-00019-j8d",
+          "uid": "dfe4ba5d-976c-4129-beb2-0296a9331fa5"
+        },
+        "spec": {
+          "containerConcurrency": 80,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "LEDGER_API_BASE",
+                  "value": "https://cmquo-api-891476346781.europe-west2.run.app"
+                },
+                {
+                  "name": "LEDGER_SELLER_NAME",
+                  "value": "CMQUO Limited"
+                },
+                {
+                  "name": "LEDGER_SELLER_ADDRESS_LINE1",
+                  "value": "1 Solar Way"
+                },
+                {
+                  "name": "LEDGER_SELLER_ADDRESS_CITY",
+                  "value": "Doncaster"
+                },
+                {
+                  "name": "LEDGER_SELLER_ADDRESS_POSTCODE",
+                  "value": "DN1 1AA"
+                },
+                {
+                  "name": "LEDGER_SELLER_ADDRESS_COUNTRY",
+                  "value": "GB"
+                },
+                {
+                  "name": "PGHOST",
+                  "value": "/cloudsql/fearless-leader:europe-west2:cmquo-ledger-dev"
+                },
+                {
+                  "name": "PGPORT",
+                  "value": "5432"
+                },
+                {
+                  "name": "PGDATABASE",
+                  "value": "postgres"
+                },
+                {
+                  "name": "PGUSER",
+                  "value": "cmquo_app"
+                },
+                {
+                  "name": "PGPASSWORD",
+                  "value": "change-me-please"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_API_BASE",
+                  "value": "https://cmquo-api-891476346781.europe-west2.run.app"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_SELLER_NAME",
+                  "value": "CMQUO Limited"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_SELLER_ADDRESS_LINE1",
+                  "value": "1 Solar Way"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_SELLER_ADDRESS_CITY",
+                  "value": "Doncaster"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_SELLER_ADDRESS_POSTCODE",
+                  "value": "DN1 1AA"
+                },
+                {
+                  "name": "DEFAULT_LEDGER_SELLER_ADDRESS_COUNTRY",
+                  "value": "GB"
+                }
+              ],
+              "image": "us-central1-docker.pkg.dev/fearless-leader/gcf-artifacts/fearless--leader__us--central1__sync_invoice_to_ledger@sha256:5282a0d2a810985c8787b21438ac0f2114bf8f36db376371dfc810191780bcfd",
+              "name": "worker",
+              "ports": [
+                {
+                  "containerPort": 8080,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "256Mi"
+                }
+              },
+              "startupProbe": {
+                "failureThreshold": 1,
+                "periodSeconds": 240,
+                "tcpSocket": {
+                  "port": 8080
+                },
+                "timeoutSeconds": 240
+              }
+            }
+          ],
+          "runtimeClassName": "run.googleapis.com/linux-base-image-update",
+          "serviceAccountName": "891476346781-compute@developer.gserviceaccount.com",
+          "timeoutSeconds": 60
+        },
+        "status": {
+          "conditions": [
+            {
+              "lastTransitionTime": "2025-10-03T11:04:22.018654Z",
+              "message": "Deploying revision succeeded in 5.79s.",
+              "status": "True",
+              "type": "Ready"
+            },
+            {
+              "lastTransitionTime": "2025-10-03T11:04:21.976007Z",
+              "message": "Containers became healthy in 3.22s.",
+              "status": "True",
+              "type": "ContainerHealthy"
+            },
+            {
+              "lastTransitionTime": "2025-10-03T11:04:17.035943Z",
+              "message": "Container image import completed.",
+              "status": "True",
+              "type": "ContainerReady"
+            },
+            {
+              "lastTransitionTime": "2025-10-03T11:04:18.499429Z",
+              "message": "Provisioning imported containers completed in 1.46s. Checking container health. This will wait for up to 4m for the configured startup probe, including an initial delay of 0s.",
+              "status": "True",
+              "type": "ResourcesAvailable"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "imageDigest": "us-central1-docker.pkg.dev/fearless-leader/gcf-artifacts/fearless--leader__us--central1__sync_invoice_to_ledger@sha256:5282a0d2a810985c8787b21438ac0f2114bf8f36db376371dfc810191780bcfd",
+              "name": "worker"
+            }
+          ],
+          "imageDigest": "us-central1-docker.pkg.dev/fearless-leader/gcf-artifacts/fearless--leader__us--central1__sync_invoice_to_ledger@sha256:5282a0d2a810985c8787b21438ac0f2114bf8f36db376371dfc810191780bcfd",
+          "logUrl": "https://console.cloud.google.com/logs/viewer?project=fearless-leader&resource=cloud_run_revision/service_name/syncinvoicetoledger/revision_name/syncinvoicetoledger-00019-j8d&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Aresource.labels.service_name%3D%22syncinvoicetoledger%22%0Aresource.labels.revision_name%3D%22syncinvoicetoledger-00019-j8d%22",
+          "observedGeneration": 1
+        }
+      },
+      "serviceName": "run.googleapis.com",
+      "status": {
+        "message": "Ready condition status changed to True for Revision syncinvoicetoledger-00019-j8d with message: Deploying revision succeeded in 5.79s."
+      }
+    },
+    "receiveTimestamp": "2025-10-03T11:04:22.907538230Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "syncinvoicetoledger",
+        "location": "us-central1",
+        "project_id": "fearless-leader",
+        "revision_name": "syncinvoicetoledger-00019-j8d",
+        "service_name": "syncinvoicetoledger"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "timestamp": "2025-10-03T11:04:22.032100Z"
+  },
+  {
+    "insertId": "68dfadb5000ec4453c975f23",
+    "labels": {
+      "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+      "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+      "goog-drz-cloudfunctions-location": "us-central1",
+      "goog-managed-by": "cloudfunctions",
+      "instanceId": "0069c7a988d3e90fbe35417014a1b3b6c8844eb28d925f91e452ca09d0ff3bc2380160ab4963220879b4a1912c0e31bc3345820d3bf73e6dcf69b8a63fa48a4ca1d5cb7d6b567961db2776aa75b633",
+      "run.googleapis.com/base_image_versions": "us-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs22:nodejs22_20250928_22_19_0_RC00"
+    },
+    "logName": "projects/fearless-leader/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2025-10-03T11:04:22.269851876Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "syncinvoicetoledger",
+        "location": "us-central1",
+        "project_id": "fearless-leader",
+        "revision_name": "syncinvoicetoledger-00019-j8d",
+        "service_name": "syncinvoicetoledger"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "textPayload": "Default STARTUP TCP probe succeeded after 1 attempt for container \"worker\" on port 8080.",
+    "timestamp": "2025-10-03T11:04:21.967749Z"
+  },
+  {
+    "insertId": "68dfadb200093013f47944e3",
+    "labels": {
+      "firebase-functions-hash": "bc446898b22e47b3a872796665a41a25f05b2bfe",
+      "goog-drz-cloudfunctions-id": "syncinvoicetoledger",
+      "goog-drz-cloudfunctions-location": "us-central1",
+      "goog-managed-by": "cloudfunctions",
+      "instanceId": "0069c7a988d3e90fbe35417014a1b3b6c8844eb28d925f91e452ca09d0ff3bc2380160ab4963220879b4a1912c0e31bc3345820d3bf73e6dcf69b8a63fa48a4ca1d5cb7d6b567961db2776aa75b633",
+      "scaling_reason": "DEPLOYMENT_ROLLOUT"
+    },
+    "logName": "projects/fearless-leader/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2025-10-03T11:04:18.605938319Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "syncinvoicetoledger",
+        "location": "us-central1",
+        "project_id": "fearless-leader",
+        "revision_name": "syncinvoicetoledger-00019-j8d",
+        "service_name": "syncinvoicetoledger"
+      },
+      "type": "cloud_run_revision"
+    },
+    "severity": "INFO",
+    "textPayload": "Starting new instance. Reason: DEPLOYMENT_ROLLOUT - Instance started due to traffic shifting between revisions due to deployment, traffic split adjustment, or deployment health check.",
+    "timestamp": "2025-10-03T11:04:18.602131Z"
+  }
+]

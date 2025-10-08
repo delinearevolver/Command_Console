@@ -1,0 +1,147 @@
+const AccountsPage = () => {
+    const { users, orgs } = useData();
+    const { user: currentUser } = useAuth();
+    const [selectedUserId, setSelectedUserId] = useState(null);
+    const [newOrgName, setNewOrgName] = useState('');
+    const [status, setStatus] = useState(null);
+
+    useEffect(() => {
+        if (selectedUserId && !users.some(u => u.id === selectedUserId)) {
+            setSelectedUserId(null);
+        }
+    }, [users, selectedUserId]);
+
+    const selectedUser = useMemo(() => users.find(u => u.id === selectedUserId) || null, [users, selectedUserId]);
+    const currentOrgLabel = useMemo(() => {
+        if (!selectedUser) return '';
+        const match = orgs.find(org => org.id === selectedUser.orgId);
+        return match ? (match.name || match.id) : selectedUser.orgId || '';
+    }, [orgs, selectedUser]);
+
+    const canCreateOrg = (currentUser?.authEmail || currentUser?.email || '').trim().toLowerCase() === 'delinearevolver@gmail.com';
+
+    const handleOrgSelection = async (orgId) => {
+        if (!selectedUser) return;
+        try {
+            setStatus(null);
+            const userRef = doc(db, 'users', selectedUser.id);
+            const updates = { updatedAt: serverTimestamp() };
+            updates.orgId = orgId ? orgId : deleteField();
+            await updateDoc(userRef, updates);
+            setStatus({ type: 'success', text: 'Organization assignment updated.' });
+        } catch (error) {
+            console.error('Failed to update organization assignment:', error);
+            setStatus({ type: 'error', text: 'Could not update organization assignment.' });
+        }
+    };
+
+    const handleCreateOrg = async () => {
+        if (!selectedUser) {
+            setStatus({ type: 'error', text: 'Select a user before creating an organization.' });
+            return;
+        }
+        if (!newOrgName.trim()) {
+            setStatus({ type: 'error', text: 'Provide a name for the new organization.' });
+            return;
+        }
+        if (!canCreateOrg) {
+            setStatus({ type: 'error', text: 'Only delinearevolver@gmail.com can create new organizations.' });
+            return;
+        }
+        try {
+            setStatus(null);
+            const trimmedName = newOrgName.trim();
+            const orgRef = doc(collection(db, 'orgs'));
+            await setDoc(orgRef, {
+                name: trimmedName,
+                ownerId: selectedUser.id,
+                createdBy: currentUser?.uid || null,
+                createdAt: serverTimestamp(),
+            });
+            const userRef = doc(db, 'users', selectedUser.id);
+            const updates = { orgId: orgRef.id, updatedAt: serverTimestamp() };
+            if ((selectedUser.role || '').toLowerCase() !== 'master') {
+                updates.role = 'master';
+            }
+            await updateDoc(userRef, updates);
+            setNewOrgName('');
+            setStatus({ type: 'success', text: trimmedName + ' created and assigned.' });
+        } catch (error) {
+            console.error('Failed to create organization:', error);
+            setStatus({ type: 'error', text: 'Could not create organization.' });
+        }
+    };
+
+    return (
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
+            <Card>
+                <h3 className="text-lg font-semibold text-red-400 mb-3">User Directory</h3>
+                <div className="space-y-2">
+                    {users.map(user => {
+                        const isActive = selectedUserId === user.id;
+                        return (
+                            <button
+                                key={user.id}
+                                type="button"
+                                onClick={() => { setSelectedUserId(user.id); setStatus(null); }}
+                                className={`w-full text-left p-3 border transition-colors ${isActive ? 'bg-red-900/50 border-red-500' : 'bg-gray-900 border-red-900'}`}
+                            >
+                                <div className="flex justify-between items-center">
+                                    <span className="font-semibold text-red-200">{user.name || user.email}</span>
+                                    <span className="text-xs text-gray-400 uppercase tracking-wide">{user.role || 'unassigned'}</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">{user.email}</p>
+                                <p className="text-xs text-gray-500 mt-1">Org: {user.orgId || 'None'}</p>
+                            </button>
+                        );
+                    })}
+                    {users.length === 0 && <p className="text-sm text-gray-500">No users available.</p>}
+                </div>
+            </Card>
+            <Card className="space-y-4">
+                <div>
+                    <h3 className="text-lg font-semibold text-red-400">Account Controls</h3>
+                    <p className="text-xs text-gray-400">Assign accounts to organizations or stand up new ones when needed.</p>
+                </div>
+                {status && (
+                    <p className={`text-xs ${status.type === 'error' ? 'text-yellow-300' : 'text-green-400'}`}>{status.text}</p>
+                )}
+                {selectedUser ? (
+                    <div className="space-y-4">
+                        <div>
+                            <h4 className="text-sm font-semibold text-red-300">Selected User</h4>
+                            <p className="text-sm text-gray-300">{selectedUser.name || selectedUser.email}</p>
+                            <p className="text-xs text-gray-500">Current org: {currentOrgLabel || 'Unassigned'}</p>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm text-red-200">Assign to existing organization</label>
+                            <Select value={selectedUser.orgId || ''} onChange={e => handleOrgSelection(e.target.value)}>
+                                <option value="">Unassigned</option>
+                                {orgs.map(org => (
+                                    <option key={org.id} value={org.id}>{org.name || org.id}</option>
+                                ))}
+                            </Select>
+                            {!orgs.length && <p className="text-xs text-gray-500">No organizations available.</p>}
+                        </div>
+                        <div className="space-y-2">
+                            <h4 className="text-sm font-semibold text-red-300">Create and assign new organization</h4>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                                <Input
+                                    placeholder="Organization name"
+                                    value={newOrgName}
+                                    onChange={e => setNewOrgName(e.target.value)}
+                                />
+                                <Button type="button" className="sm:w-auto" onClick={handleCreateOrg} disabled={!canCreateOrg}>Create & Assign</Button>
+                            </div>
+                            <p className="text-xs text-gray-500">Creates a new organization, assigns it to the operator, and (if needed) elevates their role to master.</p>
+                            {!canCreateOrg && <p className="text-xs text-yellow-300">Only delinearevolver@gmail.com can create new organizations.</p>}
+                        </div>
+                        <p className="text-xs text-gray-500">Reassignments update immediately; use Admin for project/process permissions.</p>
+                    </div>
+                ) : (
+                    <p className="text-sm text-gray-500">Select an operator to manage their organization assignment.</p>
+                )}
+            </Card>
+        </div>
+    );
+};
