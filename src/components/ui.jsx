@@ -8,7 +8,7 @@ export const Card = ({ children, className = '' }) => (
 
 export const Input = ({ className = '', ...props }) => (
     <input
-        className={`w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none ${className}`}
+        className={`w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none disabled:bg-gray-800 disabled:text-gray-500 disabled:border-gray-700 disabled:cursor-not-allowed ${className}`}
         {...props}
     />
 );

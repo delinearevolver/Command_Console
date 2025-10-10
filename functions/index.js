@@ -27,6 +27,192 @@ const cleanForFirestore = (obj) => {
   return cleaned;
 };
 
+const distinctStrings = (input = []) => {
+  if (!Array.isArray(input)) return [];
+  const values = [];
+  for (const value of input) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed && !values.includes(trimmed)) values.push(trimmed);
+    }
+  }
+  return values;
+};
+
+const mergeStringSets = (...sources) => {
+  const merged = [];
+  for (const source of sources) {
+    if (Array.isArray(source)) {
+      for (const item of source) {
+        if (typeof item === 'string') {
+          const trimmed = item.trim();
+          if (trimmed && !merged.includes(trimmed)) merged.push(trimmed);
+        }
+      }
+    } else if (typeof source === 'string') {
+      const trimmed = source.trim();
+      if (trimmed && !merged.includes(trimmed)) merged.push(trimmed);
+    }
+  }
+  return merged;
+};
+
+const normalizeRoles = (role, roles, ...extras) => {
+  const merged = mergeStringSets(roles, role, ...extras);
+  if (!merged.length) merged.push('worker');
+  return merged;
+};
+
+const arraysMatch = (a = [], b = []) => {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+};
+
+const assertAuthenticated = (auth) => {
+  if (!auth || !auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'You must be signed in to perform this action.');
+  }
+};
+
+const fetchUserRecord = async (uid) => {
+  if (!uid) return null;
+  const snapshot = await getFirestore().collection('users').doc(uid).get();
+  return snapshot.exists ? snapshot.data() : null;
+};
+
+const isSuperAdminEmail = (email) => {
+  if (typeof email !== 'string') return false;
+  return email.trim().toLowerCase() === 'delinearevolver@gmail.com';
+};
+
+const callerHasOrgAuthority = (caller, organizationId) => {
+  if (!caller) return false;
+  if (caller.role && ['master', 'owner', 'admin'].includes(String(caller.role).toLowerCase())) return true;
+  const roles = Array.isArray(caller.roles) ? caller.roles.map((role) => String(role).toLowerCase()) : [];
+  if (roles.some((role) => ['master', 'owner', 'admin'].includes(role))) return true;
+  const orgIds = mergeStringSets(caller.orgIds, caller.organizations, caller.orgId);
+  return organizationId ? orgIds.includes(organizationId) : orgIds.length > 0;
+};
+
+exports.createOrganization = onCall(async (request) => {
+  assertAuthenticated(request.auth);
+  const db = getFirestore();
+  const callerEmail = request.auth.token?.email || '';
+  const caller = await fetchUserRecord(request.auth.uid);
+
+  if (!isSuperAdminEmail(callerEmail) && !callerHasOrgAuthority(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Only authorised administrators can create new organizations.');
+  }
+
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
+  if (!name) {
+    throw new functions.https.HttpsError('invalid-argument', 'Organization name is required.');
+  }
+  const description = typeof request.data?.description === 'string' ? request.data.description.trim() : '';
+
+  const now = FieldValue.serverTimestamp();
+  const orgRef = db.collection('organizations').doc();
+  const payload = cleanForFirestore({
+    name,
+    description: description || null,
+    owners: mergeStringSets([request.auth.uid], caller?.owners),
+    admins: mergeStringSets([request.auth.uid], caller?.admins),
+    members: mergeStringSets([request.auth.uid], caller?.members),
+    createdBy: request.auth.uid,
+    createdAt: now,
+    updatedAt: now,
+    status: 'active',
+    orgId: orgRef.id,
+  });
+  await orgRef.set(payload);
+
+  const aliasRef = db.collection('orgs').doc(orgRef.id);
+  await aliasRef.set(cleanForFirestore({
+    name,
+    description: description || null,
+    ownerId: request.auth.uid,
+    createdAt: now,
+    updatedAt: now,
+  }), { merge: true });
+
+  const mergedOrgIds = mergeStringSets(caller?.orgIds, caller?.organizations, caller?.orgId, orgRef.id);
+  const mergedRoles = normalizeRoles(caller?.role || 'master', caller?.roles, 'master', 'owner');
+  if (!mergedRoles.includes('master')) mergedRoles.unshift('master');
+  if (!mergedRoles.includes('owner')) mergedRoles.push('owner');
+
+  await db.collection('users').doc(request.auth.uid).set(cleanForFirestore({
+    orgId: orgRef.id,
+    orgIds: mergedOrgIds,
+    organizations: mergedOrgIds,
+    role: caller?.role || 'master',
+    roles: mergedRoles,
+    updatedAt: now,
+  }), { merge: true });
+
+  return { organizationId: orgRef.id };
+});
+
+exports.assignOrganization = onCall(async (request) => {
+  assertAuthenticated(request.auth);
+  const userId = typeof request.data?.userId === 'string' ? request.data.userId.trim() : '';
+  const organizationId = typeof request.data?.organizationId === 'string' ? request.data.organizationId.trim() : '';
+
+  if (!userId || !organizationId) {
+    throw new functions.https.HttpsError('invalid-argument', 'User ID and Organization ID are required.');
+  }
+
+  const db = getFirestore();
+  const callerEmail = request.auth.token?.email || '';
+  const callerRecord = await fetchUserRecord(request.auth.uid);
+  const organizationSnap = await db.collection('organizations').doc(organizationId).get();
+
+  if (!organizationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Organization not found.');
+  }
+  const organization = organizationSnap.data();
+
+  if (
+    !isSuperAdminEmail(callerEmail) &&
+    !callerHasOrgAuthority(callerRecord, organizationId) &&
+    !mergeStringSets(organization.admins, organization.owners).includes(request.auth.uid)
+  ) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have permission to assign users to this organization.');
+  }
+
+  const userSnap = await db.collection('users').doc(userId).get();
+  if (!userSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Target user not found.');
+  }
+
+  const userData = userSnap.data() || {};
+  const orgIds = mergeStringSets(userData.orgIds, userData.organizations, userData.orgId, organizationId);
+  const now = FieldValue.serverTimestamp();
+
+  await userSnap.ref.set(cleanForFirestore({
+    orgId: organizationId,
+    orgIds,
+    organizations: orgIds,
+    updatedAt: now,
+  }), { merge: true });
+
+  const members = mergeStringSets(organization.members, userId);
+  await organizationSnap.ref.set(cleanForFirestore({
+    members,
+    updatedAt: now,
+  }), { merge: true });
+
+  await db.collection('orgs').doc(organizationId).set(cleanForFirestore({
+    members,
+    updatedAt: now,
+  }), { merge: true });
+
+  return { userId, organizationId };
+});
+
 // Helper function to initialize OAuth2 client
 const getOauth2Client = () => {
   return new google.auth.OAuth2(
@@ -387,5 +573,257 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
       syncPayload: cleanForFirestore(payload),
       syncUpdatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
+  }
+});
+
+exports.ensureUserDefaults = onDocumentWritten('users/{userId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const user = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+
+  const normalizedRole = typeof user.role === 'string' && user.role.trim() ? user.role.trim() : 'worker';
+  if (normalizedRole !== user.role) {
+    updates.role = normalizedRole;
+    shouldWrite = true;
+  }
+
+  const desiredRoles = normalizeRoles(updates.role || user.role, user.roles);
+  if (!arraysMatch(desiredRoles, Array.isArray(user.roles) ? user.roles : [])) {
+    updates.roles = desiredRoles;
+    shouldWrite = true;
+  }
+
+  const normalizedProjects = distinctStrings(user.assignedProjects);
+  if (!arraysMatch(normalizedProjects, Array.isArray(user.assignedProjects) ? user.assignedProjects : [])) {
+    updates.assignedProjects = normalizedProjects;
+    shouldWrite = true;
+  }
+
+  const normalizedProcesses = distinctStrings(user.assignedProcesses);
+  if (!arraysMatch(normalizedProcesses, Array.isArray(user.assignedProcesses) ? user.assignedProcesses : [])) {
+    updates.assignedProcesses = normalizedProcesses;
+    shouldWrite = true;
+  }
+
+  const orgIds = mergeStringSets(user.orgIds, user.organizations, user.orgId);
+  if (orgIds.length) {
+    if (!arraysMatch(orgIds, Array.isArray(user.orgIds) ? user.orgIds : [])) {
+      updates.orgIds = orgIds;
+      shouldWrite = true;
+    }
+    if (!arraysMatch(orgIds, Array.isArray(user.organizations) ? user.organizations : [])) {
+      updates.organizations = orgIds;
+      shouldWrite = true;
+    }
+    if (!orgIds.includes(typeof user.orgId === 'string' ? user.orgId : '')) {
+      updates.orgId = orgIds[0];
+      shouldWrite = true;
+    }
+  }
+
+  if (!user.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.hardenProjectContext = onDocumentWritten('projects/{projectId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const project = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+
+  const programId = typeof project.programId === 'string' ? project.programId.trim() : '';
+  if (programId) {
+    const programSnap = await db.collection('programs').doc(programId).get();
+    if (programSnap.exists) {
+      const program = programSnap.data() || {};
+      const programOrgId = mergeStringSets(program.orgId, program.orgIds)[0];
+      if (programOrgId && project.orgId !== programOrgId) {
+        updates.orgId = programOrgId;
+        shouldWrite = true;
+      }
+      if (program.name && project.programName !== program.name) {
+        updates.programName = program.name;
+        shouldWrite = true;
+      }
+      if (project.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!project.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  }
+
+  if (!project.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.syncProcessMetadata = onDocumentWritten('processes/{processId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const process = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+  const projectId = typeof process.projectId === 'string' ? process.projectId.trim() : '';
+
+  if (projectId) {
+    const projectSnap = await db.collection('projects').doc(projectId).get();
+    if (projectSnap.exists) {
+      const project = projectSnap.data() || {};
+      const projectOrgId = mergeStringSets(project.orgId, project.orgIds)[0];
+      if (projectOrgId && process.orgId !== projectOrgId) {
+        updates.orgId = projectOrgId;
+        shouldWrite = true;
+      }
+      const programId = typeof project.programId === 'string' ? project.programId.trim() : '';
+      if (programId && process.programId !== programId) {
+        updates.programId = programId;
+        shouldWrite = true;
+      }
+      if (project.name && process.projectName !== project.name) {
+        updates.projectName = project.name;
+        shouldWrite = true;
+      }
+      if (process.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!process.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  } else if (!process.isOrphaned) {
+    updates.isOrphaned = true;
+    shouldWrite = true;
+  }
+
+  if (!process.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.syncTaskMetadata = onDocumentWritten('tasks/{taskId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const task = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+
+  const allowedStatuses = ['todo', 'inprogress', 'done'];
+  const currentStatus = typeof task.status === 'string' ? task.status.trim().toLowerCase() : '';
+  if (!allowedStatuses.includes(currentStatus)) {
+    updates.status = 'todo';
+    shouldWrite = true;
+  }
+
+  const normalizedAssignees = distinctStrings(task.assignedTo);
+  if (!arraysMatch(normalizedAssignees, Array.isArray(task.assignedTo) ? task.assignedTo : [])) {
+    updates.assignedTo = normalizedAssignees;
+    shouldWrite = true;
+  }
+
+  const processId = typeof task.processId === 'string' ? task.processId.trim() : '';
+  const projectId = typeof task.projectId === 'string' ? task.projectId.trim() : '';
+
+  let processData = null;
+
+  if (processId) {
+    const processSnap = await db.collection('processes').doc(processId).get();
+    if (processSnap.exists) {
+      processData = processSnap.data() || {};
+      const processOrgId = mergeStringSets(processData.orgId, processData.orgIds)[0];
+      if (processOrgId && task.orgId !== processOrgId) {
+        updates.orgId = processOrgId;
+        shouldWrite = true;
+      }
+
+      const processProjectId = typeof processData.projectId === 'string' ? processData.projectId.trim() : '';
+      if (processProjectId && processProjectId !== projectId) {
+        updates.projectId = processProjectId;
+        shouldWrite = true;
+      }
+
+      const processProgramId = typeof processData.programId === 'string' ? processData.programId.trim() : '';
+      if (processProgramId && task.programId !== processProgramId) {
+        updates.programId = processProgramId;
+        shouldWrite = true;
+      }
+
+      if (processData.name && task.processName !== processData.name) {
+        updates.processName = processData.name;
+        shouldWrite = true;
+      }
+
+      if (task.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!task.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  }
+
+  const effectiveProjectId = updates.projectId || projectId;
+  if (effectiveProjectId) {
+    const projectSnap = await db.collection('projects').doc(effectiveProjectId).get();
+    if (projectSnap.exists) {
+      const projectData = projectSnap.data() || {};
+      const projectOrgId = mergeStringSets(projectData.orgId, projectData.orgIds)[0];
+      if (projectOrgId && (updates.orgId || task.orgId) !== projectOrgId) {
+        updates.orgId = projectOrgId;
+        shouldWrite = true;
+      }
+      const projectProgramId = typeof projectData.programId === 'string' ? projectData.programId.trim() : '';
+      if (projectProgramId && task.programId !== projectProgramId && updates.programId !== projectProgramId) {
+        updates.programId = projectProgramId;
+        shouldWrite = true;
+      }
+      if (projectData.name && task.projectName !== projectData.name) {
+        updates.projectName = projectData.name;
+        shouldWrite = true;
+      }
+    }
+  }
+
+  if (!task.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
   }
 });
