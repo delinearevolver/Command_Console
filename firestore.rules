@@ -183,6 +183,18 @@ service cloud.firestore {
       allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
     }
 
+    match /products/{productId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && request.resource.data.type == 'product';
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.type == resource.data.type;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
     match /tasks/{taskId} {
       allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
       allow create: if signedIn() && requesterExists() && canManageOperations()

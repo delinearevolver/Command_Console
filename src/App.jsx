@@ -5,8 +5,10 @@ import React, { useState, useEffect, createContext, useContext, useMemo, useCall
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { getFirestore, collection, query, where, onSnapshot, doc, getDoc, writeBatch, updateDoc, serverTimestamp, addDoc, setDoc, deleteDoc, deleteField } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import BillingConsole from './components/BillingConsole.jsx';
+import CatalogueConsole from './components/CatalogueConsole';
 
 // --- Firebase Configuration ---
 // IMPORTANT: Replace with your actual Firebase config from your project settings.
@@ -24,6 +26,7 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
+export const storage = getStorage(app);
 
 // --- CONTEXTS ---
 const AuthContext = createContext();
@@ -65,31 +68,102 @@ const TerminologyProvider = ({ children }) => {
 
 const DataProvider = ({ children }) => {
     const { user } = useContext(AuthContext);
-    const [data, setData] = useState({ programs: [], projects: [], processes: [], tasks: [], users: [], customers: [], priceBooks: [], invoices: [], invoiceTemplates: [], loading: true });
+    const [products, setProducts] = useState([]);
+    const [services, setServices] = useState([]);
+    const [productPriceBooks, setProductPriceBooks] = useState([]);
+    const [servicePriceBooks, setServicePriceBooks] = useState([]);
+    const [data, setData] = useState({
+        programs: [],
+        projects: [],
+        processes: [],
+        tasks: [],
+        users: [],
+        customers: [],
+        catalogueItems: [],
+        priceBooks: [],
+        invoices: [],
+        invoiceTemplates: [],
+        loading: true
+    });
 
     useEffect(() => {
         if (!user || !user.orgId) {
-            setData(d => ({ ...d, loading: false, programs: [], projects: [], processes: [], tasks: [], users: [], customers: [], priceBooks: [], invoices: [], invoiceTemplates: [] }));
+            setData(d => ({
+                ...d,
+                loading: false,
+                programs: [],
+                projects: [],
+                processes: [],
+                tasks: [],
+                users: [],
+                customers: [],
+                catalogueItems: [],
+                priceBooks: [],
+                invoices: [],
+                invoiceTemplates: []
+            }));
+            setProducts([]);
+            setServices([]);
+            setProductPriceBooks([]);
+            setServicePriceBooks([]);
             return;
         }
 
         const unsubscribes = [];
         setData(d => ({ ...d, loading: true }));
 
-        const collectionsToFetch = ['programs', 'processes', 'projects', 'tasks', 'users', 'customers', 'priceBooks', 'invoices', 'invoiceTemplates'];
+        const collectionsToFetch = [
+            'programs',
+            'processes',
+            'projects',
+            'tasks',
+            'users',
+            'customers',
+            'catalogueItems',
+            'priceBooks',
+            'invoices',
+            'invoiceTemplates'
+        ];
         collectionsToFetch.forEach(col => {
             const q = query(collection(db, col), where("orgId", "==", user.orgId));
             unsubscribes.push(onSnapshot(q, snap => {
                 setData(prev => ({ ...prev, [col]: snap.docs.map(d => ({ id: d.id, ...d.data() })) }));
             }, err => console.error(`Error fetching ${col}:`, err)));
         });
+
+        const productsQuery = query(collection(db, 'products'), where('orgId', '==', user.orgId));
+        const unsubProducts = onSnapshot(productsQuery, snapshot => {
+            setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, err => console.error('Error fetching products:', err));
+        unsubscribes.push(unsubProducts);
+
+        const servicesQuery = query(collection(db, 'services'), where('orgId', '==', user.orgId));
+        const unsubServices = onSnapshot(servicesQuery, snapshot => {
+            setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, err => console.error('Error fetching services:', err));
+        unsubscribes.push(unsubServices);
+
+        const productPriceBooksQuery = query(collection(db, 'productPriceBooks'), where('orgId', '==', user.orgId));
+        const unsubProductPriceBooks = onSnapshot(productPriceBooksQuery, snapshot => {
+            setProductPriceBooks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, err => console.error('Error fetching product price books:', err));
+        unsubscribes.push(unsubProductPriceBooks);
+
+        const servicePriceBooksQuery = query(collection(db, 'servicePriceBooks'), where('orgId', '==', user.orgId));
+        const unsubServicePriceBooks = onSnapshot(servicePriceBooksQuery, snapshot => {
+            setServicePriceBooks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, err => console.error('Error fetching service price books:', err));
+        unsubscribes.push(unsubServicePriceBooks);
         
         const timer = setTimeout(() => setData(prev => ({...prev, loading: false})), 1500);
 
-        return () => unsubscribes.forEach(unsub => unsub());
+        return () => {
+            unsubscribes.forEach(unsub => unsub());
+            clearTimeout(timer);
+        };
     }, [user]);
 
-    return <DataContext.Provider value={data}>{children}</DataContext.Provider>;
+    return <DataContext.Provider value={{ ...data, products, services, productPriceBooks, servicePriceBooks }}>{children}</DataContext.Provider>;
 };
 
 
@@ -120,21 +194,157 @@ const isBillingTask = (task) => {
 };
 
 // --- STYLED COMPONENTS ---
-const Card = ({ children, className = '' }) => <div className={`p-4 sm:p-6 border border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.5)] bg-black bg-opacity-80 ${className}`}>{children}</div>;
+const Card = ({ children, className = '', ...props }) => (
+    <div
+        {...props}
+        className={`p-4 sm:p-6 border border-red-500 shadow-[0_0_15px_rgba(255,0,0,0.5)] bg-black bg-opacity-80 ${className}`}
+    >
+        {children}
+    </div>
+);
 const Input = (props) => <input {...props} className="w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none" />;
-const Button = ({ children, ...props }) => <button {...props} className={`w-full p-2 bg-red-800 hover:bg-red-700 font-bold disabled:bg-red-900/50 disabled:cursor-not-allowed transition-colors ${props.className}`}>{children}</button>;
+const Button = ({ children, className = '', ...props }) => (
+    <button
+        {...props}
+        className={`w-full p-2 bg-red-800 hover:bg-red-700 font-bold disabled:bg-red-900/50 disabled:cursor-not-allowed transition-colors ${className}`}
+    >
+        {children}
+    </button>
+);
 const Select = ({ children, ...props }) => <select {...props} className="w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none appearance-none" style={{backgroundImage: `url('data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="%23ff0000" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708 .708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/></svg>')`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.5rem center'}}>{children}</select>;
 const Label = ({ className = '', children, ...props }) => (<label {...props} className={`block text-xs uppercase tracking-wide text-gray-400 ${className}`}>{children}</label>);
 const TextArea = (props) => <textarea {...props} className="w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none" />;
 
+const HomeView = ({ setActiveConsole, onSignOut }) => (
+    <div className="min-h-screen bg-gray-950 p-6">
+        <div className="max-w-6xl mx-auto space-y-6">
+            <div className="flex justify-end">
+                <div className="w-full sm:w-auto sm:min-w-[180px]">
+                    <Button
+                        type="button"
+                        className="bg-gray-800"
+                        onClick={onSignOut}
+                    >
+                        Sign out
+                    </Button>
+                </div>
+            </div>
+
+            <Card className="text-center bg-black bg-opacity-90">
+                <h1 className="text-3xl font-bold text-red-300">Command Console</h1>
+                <p className="text-gray-400 mt-2">Business management platform</p>
+            </Card>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card
+                    className="hover:border-red-500 transition-colors cursor-pointer"
+                    onClick={() => setActiveConsole('catalogue')}
+                >
+                    <div className="text-center space-y-4 p-6">
+                        <div className="text-5xl">📦</div>
+                        <h2 className="text-2xl font-bold text-red-300">Catalogue</h2>
+                        <p className="text-gray-400">Manage products, services, and marketplace listings</p>
+                        <Button className="w-full">Open Catalogue</Button>
+                    </div>
+                </Card>
+
+                <Card
+                    className="hover:border-red-500 transition-colors cursor-pointer"
+                    onClick={() => setActiveConsole('billing')}
+                >
+                    <div className="text-center space-y-4 p-6">
+                        <div className="text-5xl">💼</div>
+                        <h2 className="text-2xl font-bold text-red-300">Billing</h2>
+                        <p className="text-gray-400">Create invoices, manage customers, track payments</p>
+                        <Button className="w-full">Open Billing</Button>
+                    </div>
+                </Card>
+
+                <Card className="hover:border-red-500 transition-colors opacity-50">
+                    <div className="text-center space-y-4 p-6">
+                        <div className="text-5xl">📊</div>
+                        <h2 className="text-2xl font-bold text-gray-500">Projects</h2>
+                        <p className="text-gray-400">Coming soon</p>
+                    </div>
+                </Card>
+
+                <Card className="hover:border-red-500 transition-colors opacity-50">
+                    <div className="text-center space-y-4 p-6">
+                        <div className="text-5xl">🔄</div>
+                        <h2 className="text-2xl font-bold text-gray-500">Processes</h2>
+                        <p className="text-gray-400">Coming soon</p>
+                    </div>
+                </Card>
+            </div>
+        </div>
+    </div>
+);
+
+const AppContent = ({ activeConsole, setActiveConsole }) => {
+    const { user, loading } = useAuth();
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center min-h-screen bg-gray-950 text-red-500 text-2xl">
+                Initializing Systems...
+            </div>
+        );
+    }
+
+    if (!user) {
+        return <AuthScreen />;
+    }
+
+    if (activeConsole === 'catalogue') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        ← Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <CatalogueConsole />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'billing') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        ← Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <BillingConsole />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return <HomeView setActiveConsole={setActiveConsole} onSignOut={() => signOut(auth)} />;
+};
+
 // --- Main App & Router ---
 export default function App() {
+    const [activeConsole, setActiveConsole] = useState('home');
     return (
         <AuthProvider>
             <TerminologyProvider>
                 <DataProvider>
-                    <div className="bg-black text-gray-200 min-h-screen" style={{ fontFamily: "'Orbitron', sans-serif" }}>
-                        <MainRouter />
+                    <div className="text-gray-200 min-h-screen" style={{ fontFamily: "'Orbitron', sans-serif" }}>
+                        <AppContent activeConsole={activeConsole} setActiveConsole={setActiveConsole} />
                     </div>
                 </DataProvider>
             </TerminologyProvider>
