@@ -202,7 +202,12 @@ const Card = ({ children, className = '', ...props }) => (
         {children}
     </div>
 );
-const Input = (props) => <input {...props} className="w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none" />;
+const Input = ({ className = '', ...props }) => (
+    <input
+        {...props}
+        className={`w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none disabled:bg-gray-800 disabled:text-gray-500 disabled:border-red-900 ${className}`}
+    />
+);
 const Button = ({ children, className = '', ...props }) => (
     <button
         {...props}
@@ -405,6 +410,78 @@ const AuthScreen = () => {
     );
 };
 
+// --- SYSTEM STATUS MONITOR ---
+const SystemStatus = () => {
+    const [status, setStatus] = useState('initializing');
+    const [stats, setStats] = useState({ success: 0, errors: 0 });
+    const [lastCheck, setLastCheck] = useState(null);
+
+    useEffect(() => {
+        const API_URL = "https://cmquo-api-891476346781.europe-west2.run.app/health";
+
+        const checkHealth = async () => {
+            try {
+                const res = await fetch(API_URL);
+                const data = await res.json();
+
+                if (res.ok && data.ok) {
+                    setStatus('operational');
+                    if (data.activity) setStats(data.activity);
+                } else {
+                    setStatus('degraded');
+                }
+            } catch (e) {
+                setStatus('offline');
+            }
+            setLastCheck(new Date().toLocaleTimeString());
+        };
+
+        checkHealth();
+        const interval = setInterval(checkHealth, 15000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const getStatusColor = () => {
+        if (status === 'operational') return 'text-green-500';
+        if (status === 'offline') return 'text-red-500 animate-pulse';
+        if (status === 'degraded') return 'text-yellow-500';
+        return 'text-gray-500';
+    };
+
+    return (
+        <div className="p-4 border border-gray-800 bg-gray-900/80 mb-6 flex justify-between items-center shadow-[0_0_10px_rgba(0,255,0,0.1)]">
+            <div className="flex items-center gap-4">
+                <div className="flex flex-col">
+                    <h3 className="font-bold text-gray-400 text-xs uppercase tracking-wider">Ledger Uplink</h3>
+                    <span className={`text-2xl font-mono font-bold ${getStatusColor()}`}>
+                        {status.toUpperCase()}
+                    </span>
+                </div>
+
+                {status === 'operational' && (
+                    <div className="flex gap-4 ml-4 border-l border-gray-700 pl-4">
+                        <div className="text-center">
+                            <span className="block text-xs text-gray-500">SUCCESS</span>
+                            <span className="text-green-400 font-mono">{stats.success}</span>
+                        </div>
+                        <div className="text-center">
+                            <span className="block text-xs text-gray-500">ERRORS</span>
+                            <span className={`font-mono ${stats.errors > 0 ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
+                                {stats.errors}
+                            </span>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            <div className="text-right">
+                <p className="text-[10px] text-gray-500 uppercase">Last Heartbeat</p>
+                <p className="text-gray-400 font-mono text-sm">{lastCheck || '...'}</p>
+            </div>
+        </div>
+    );
+};
+
 // --- ORGANIZATIONAL DASHBOARD ---
 const OrgDashboard = () => {
     const { user } = useAuth();
@@ -466,6 +543,7 @@ const OrgDashboard = () => {
                     <button onClick={() => signOut(auth)} className="p-2 text-sm bg-gray-800 border border-red-700">Logout</button>
                 </div>
             </header>
+            <SystemStatus />
 
             {view === 'dashboard' ? <HierarchyDashboard onNavigateToBilling={navigateToBilling} /> :
              view === 'kanban' ? <KanbanDashboard onNavigateToBilling={navigateToBilling} /> :
