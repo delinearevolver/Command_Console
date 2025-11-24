@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp, arrayUnion, Timestamp } from 'firebase/firestore';
 import { db, useAuth, useData } from '../App';
 import { Card, Input, Button, Select, TextArea } from './ui';
-import { buildInvoicePdf, buildEmailDraftBlob } from '../utils/invoiceEmail';
+import { buildInvoicePdf } from '../utils/invoiceEmail';
 
 const randomId = () => {
     try {
@@ -38,6 +38,17 @@ const formatCurrency = (value, currency = 'GBP') => {
         return (value || 0).toFixed(2);
     }
 };
+
+const trimString = (value) => (typeof value === 'string' ? value.trim() : '');
+
+const EMAIL_SERVICE_OPTIONS = Object.freeze([
+    'Logistics Services',
+    'Consulting Services',
+    'Implementation Support',
+    'Managed Services',
+]);
+const CUSTOM_SERVICE_OPTION = '__custom__';
+const DEFAULT_SERVICE_LABEL = EMAIL_SERVICE_OPTIONS[0];
 
 const INVOICE_STATUS = Object.freeze({
     DRAFT: 'Draft',
@@ -87,20 +98,124 @@ function StatusBadge({ status }) {
     );
 }
 
+const DOCUMENT_KIND_LABELS = Object.freeze({
+    invoice: { title: 'Invoice', lower: 'invoice' },
+    credit: { title: 'Credit Note', lower: 'credit note' },
+});
+
+const normalizeDocumentCreditToken = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+
+const valueHintsCredit = (value) => {
+    const token = normalizeDocumentCreditToken(value);
+    if (!token) return false;
+    if (token.includes('credit')) return true;
+    if (token.startsWith('cred')) return true;
+    if (token.startsWith('cn')) return true;
+    return false;
+};
+
+const documentHasCreditAmounts = (document = {}) => {
+    const totals = document?.totals || {};
+    const checkNumbers = [totals.net, totals.gross, totals.tax, totals.rounding];
+    if (checkNumbers.some(value => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric < 0;
+    })) {
+        return true;
+    }
+    const linesSource = Array.isArray(document?.lines) && document.lines.length
+        ? document.lines
+        : Array.isArray(document?.lineItems) ? document.lineItems : [];
+    if (linesSource.length > 0) {
+        const derivedNet = linesSource.reduce((sum, line) => {
+            const qty = Number(line?.quantity) || 0;
+            const price = Number(line?.unitPrice) || 0;
+            return sum + (qty * price);
+        }, 0);
+        if (derivedNet < 0) return true;
+    }
+    return false;
+};
+
+const deriveTotalsFromLines = (invoice = {}) => {
+    const sourceLines = Array.isArray(invoice?.lines) && invoice.lines.length
+        ? invoice.lines
+        : Array.isArray(invoice?.lineItems) ? invoice.lineItems : [];
+    if (!sourceLines.length) return null;
+    const sanitized = sanitizeInvoiceLines(sourceLines, invoice.issueDate || todayISO());
+    return calculateTotals(sanitized);
+};
+
+const getSignedAmount = (value, isCredit) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    const magnitude = Math.abs(numeric);
+    return isCredit ? -magnitude : magnitude;
+};
+
+const getSignedGross = (invoice, isCreditHint) => {
+    const isCreditDoc = typeof isCreditHint === 'boolean' ? isCreditHint : resolveDocumentKind(invoice) === 'credit';
+    const totals = invoice?.totals || {};
+    let grossValue = Number(totals.gross);
+    if (!Number.isFinite(grossValue)) {
+        const derivedTotals = deriveTotalsFromLines(invoice);
+        grossValue = derivedTotals ? derivedTotals.gross : 0;
+    }
+    return getSignedAmount(grossValue, isCreditDoc);
+};
+
+const getSignedPaid = (invoice, isCreditHint) => {
+    const isCreditDoc = typeof isCreditHint === 'boolean' ? isCreditHint : resolveDocumentKind(invoice) === 'credit';
+    const payments = Array.isArray(invoice?.payments) ? invoice.payments : [];
+    const paidRaw = payments.reduce((sum, payment) => sum + (Number(payment?.amount) || 0), 0);
+    return getSignedAmount(paidRaw, isCreditDoc);
+};
+
+const resolveDocumentKind = (document = {}) => {
+    if (!document) return 'invoice';
+    if (document.isCredit === true || document.isCreditNote === true) return 'credit';
+    const textIndicators = [
+        document.kind,
+        document.invoiceKind,
+        document.documentType,
+        document.documentLabel,
+        document.type,
+        document.reference,
+        document.referencePrefix,
+        document.buyerReference,
+        document.payment?.paymentReference,
+        document.payment?.endToEndId,
+    ];
+    if (textIndicators.some(valueHintsCredit)) return 'credit';
+    if (documentHasCreditAmounts(document)) return 'credit';
+    return 'invoice';
+};
+
+const getDocumentLabels = (document = {}) => {
+    const kind = resolveDocumentKind(document);
+    const labels = DOCUMENT_KIND_LABELS[kind] || DOCUMENT_KIND_LABELS.invoice;
+    const capitalized = labels.lower.charAt(0).toUpperCase() + labels.lower.slice(1);
+    return { kind, ...labels, capitalized };
+};
+
 function SendInvoiceModal({ open, invoice, customerName, onDownloadDraft, onMarkSent, onCancel, markDisabled }) {
     if (!open || !invoice) return null;
     const amount = formatCurrency(invoice.totals?.gross || 0, invoice.currency || 'GBP');
+    const documentLabels = getDocumentLabels(invoice);
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
             <div className="w-full max-w-lg space-y-4 rounded border border-red-700 bg-gray-950 p-6 shadow-xl">
-                <h3 className="text-lg font-semibold text-red-300">Send Invoice</h3>
+                <h3 className="text-lg font-semibold text-red-300">Send {documentLabels.title}</h3>
                 <p className="text-sm text-gray-300">
                     You are about to send <span className="font-semibold">{invoice.reference || invoice.id}</span> to{' '}
                     <span className="font-semibold">{customerName || 'Customer'}</span>.
                 </p>
                 <div className="space-y-2 rounded border border-red-900/60 bg-gray-900/60 p-3 text-sm text-gray-200">
                     <div className="flex justify-between">
-                        <span>Invoice reference</span>
+                        <span>{documentLabels.title} reference</span>
                         <span className="font-semibold">{invoice.reference || invoice.id}</span>
                     </div>
                     <div className="flex justify-between">
@@ -114,11 +229,11 @@ function SendInvoiceModal({ open, invoice, customerName, onDownloadDraft, onMark
                 </div>
                 <div className="space-y-2 text-sm text-gray-300">
                     <p className="text-yellow-300">
-                        Sending marks this invoice as immutable. You will not be able to edit line items once it is sent.
+                        Sending marks this {documentLabels.lower} as immutable. You will not be able to edit line items once it is sent.
                     </p>
                     <p>
                         We will download an email draft file (.eml) that includes the PDF attachment. Open the file in your mail
-                        client to review, send, or discard the email. After sending the email, return here and mark the invoice as sent.
+                        client to review, send, or discard the email. After sending the email, return here and mark the {documentLabels.lower} as sent.
                     </p>
                 </div>
                 <div className="flex justify-end gap-3">
@@ -141,11 +256,12 @@ function ViewInvoiceModal({ invoice, customerName, onClose }) {
     if (!invoice) return null;
     const amount = formatCurrency(invoice.totals?.gross || 0, invoice.currency || 'GBP');
     const status = getStatusDisplay(invoice.status);
+    const documentLabels = getDocumentLabels(invoice);
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
             <div className="w-full max-w-2xl space-y-4 rounded border border-red-700 bg-gray-950 p-6 shadow-xl">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-red-300">Invoice Details</h3>
+                    <h3 className="text-lg font-semibold text-red-300">{documentLabels.title} Details</h3>
                     <StatusBadge status={status} />
                 </div>
                 <div className="grid gap-3 rounded border border-red-900/60 bg-gray-900/60 p-4 text-sm text-gray-200">
@@ -186,6 +302,10 @@ function ViewInvoiceModal({ invoice, customerName, onClose }) {
                     <h4 className="text-sm font-semibold text-red-200">Customer details</h4>
                     <div className="space-y-1 rounded border border-red-900/60 bg-gray-900/60 p-3 text-xs text-gray-300">
                         <div className="flex justify-between gap-3">
+                            <span>Preferred name</span>
+                            <span className="font-medium text-gray-100">{(invoice.customerPreferredName || invoice.customerName || '').trim() || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
                             <span>Contact name</span>
                             <span className="font-medium text-gray-100">{(invoice.customerName || '').trim() || '-'}</span>
                         </div>
@@ -200,6 +320,10 @@ function ViewInvoiceModal({ invoice, customerName, onClose }) {
                         <div className="flex justify-between gap-3">
                             <span>Customer reference</span>
                             <span className="font-medium text-gray-100">{(invoice.customerReference || '').trim() || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                            <span>Service focus</span>
+                            <span className="font-medium text-gray-100">{(invoice.emailServiceLabel || DEFAULT_SERVICE_LABEL).trim()}</span>
                         </div>
                         <div>
                             <span className="block text-gray-400">Billing address / notes</span>
@@ -258,7 +382,7 @@ const DEFAULT_SELLER = Object.freeze({
     addressCity: 'Doncaster',
     addressPostal: 'DN4 7AT',
     addressCountry: 'GB',
-    contactEmail: 'accounts@cmquo.co.uk',
+    contactEmail: 'sbakerthe@gmail.com',
     contactPhone: '+44 7733 330865',
 });
 
@@ -268,12 +392,26 @@ const DEFAULT_PAYMENT = Object.freeze({
     bankAddress: '4th Floor, The Featherstone Building, 66 City Road, London EC1Y 2AL',
     sortCode: '04-06-05',
     accountNumber: '28497341',
-    iban: 'GB82WEST12345698765432',
-    bic: 'NWBKGB2L',
+    iban: 'GB08CLRB04060528497341',
+    bic: 'CLRBGB22',
     paymentTerms: 'NET 15',
     paymentReference: '',
     endToEndId: '',
 });
+
+const LEGACY_PAYMENT_DETAILS = Object.freeze({
+    iban: 'GB82WEST12345698765432',
+    bic: 'NWBKGB2L',
+});
+
+const upgradePaymentDetails = (payment = {}) => {
+    const normalized = { ...payment };
+    const iban = trimString(normalized.iban);
+    const bic = trimString(normalized.bic);
+    normalized.iban = !iban || iban === LEGACY_PAYMENT_DETAILS.iban ? DEFAULT_PAYMENT.iban : iban;
+    normalized.bic = !bic || bic === LEGACY_PAYMENT_DETAILS.bic ? DEFAULT_PAYMENT.bic : bic;
+    return normalized;
+};
 
 const getCustomerCompanyNumber = (customer) => {
     if (!customer) return '';
@@ -376,10 +514,12 @@ const createInitialInvoiceDraft = () => {
         dueDate: computeDueDateFromTerms(issueDate, defaultTerms),
         currency,
         customerName: '',
+        customerPreferredName: '',
         customerEmail: '',
         customerPhone: '',
         customerAddress: '',
         customerReference: '',
+        emailServiceLabel: DEFAULT_SERVICE_LABEL,
         seller: { ...DEFAULT_SELLER },
         payment: { ...DEFAULT_PAYMENT },
         buyerIdentifiers: {
@@ -508,6 +648,17 @@ const computeDueDateFromTerms = (issueDate, paymentTerms, fallback = '') => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const formatDisplayDate = (value) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+    }).format(parsed);
+};
+
 const isValidDateParts = (year, month, day) => {
     const yyyy = Number(year);
     const mm = Number(month);
@@ -603,12 +754,20 @@ const BillingConsole = () => {
     const [customerMessage, setCustomerMessage] = useState(null);
     const [invoiceMessage, setInvoiceMessage] = useState(null);
     const [templateMessage, setTemplateMessage] = useState(null);
+    const [selectedDraftIds, setSelectedDraftIds] = useState(() => new Set());
+    const [batchActionInProgress, setBatchActionInProgress] = useState(false);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendModalInvoiceId, setSendModalInvoiceId] = useState(null);
     const [viewModalInvoiceId, setViewModalInvoiceId] = useState(null);
     const [sendModalDraftReady, setSendModalDraftReady] = useState(false);
     const [skuLookupQuery, setSkuLookupQuery] = useState('');
+    const [paymentReferenceTouched, setPaymentReferenceTouched] = useState(false);
     const lastCustomerRef = useRef('');
+    const lastReferenceRef = useRef('');
+    const composeEmailLockRef = useRef(false);
+    const templateLoadRef = useRef(false);
+    const normalizedUserRole = (user?.role || '').trim().toLowerCase();
+    const canDeleteInvoices = normalizedUserRole === 'owner' || normalizedUserRole === 'master' || normalizedUserRole === 'admin';
 
     // MEMOIZED VALUES
     const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId) || null, [customers, selectedCustomerId]);
@@ -745,7 +904,9 @@ const BillingConsole = () => {
             return bTime - aTime;
         });
         return list;
-    }, [invoices]);
+    }, [invoices, setPaymentReferenceTouched]);
+    const selectedDraftCount = selectedDraftIds.size;
+    const allDraftsSelected = draftInvoices.length > 0 && selectedDraftCount === draftInvoices.length;
     const recentInvoices = useMemo(() => {
         const sorted = [...(invoices || [])];
         sorted.sort((a, b) => {
@@ -766,6 +927,25 @@ const BillingConsole = () => {
         });
         return sorted.slice(0, 5);
     }, [invoices]);
+
+    useEffect(() => {
+        setSelectedDraftIds(prev => {
+            const validIds = new Set(draftInvoices.map(invoice => invoice.id));
+            let changed = false;
+            const next = new Set();
+            prev.forEach(id => {
+                if (validIds.has(id)) {
+                    next.add(id);
+                } else {
+                    changed = true;
+                }
+            });
+            if (!changed && next.size === prev.size) {
+                return prev;
+            }
+            return next;
+        });
+    }, [draftInvoices]);
     const isCreditDocument = useMemo(() => invoiceDraft.kind === 'credit', [invoiceDraft.kind]);
     const invoicePreviewTotals = useMemo(() => {
         const totals = calculateTotals(invoiceDraft.lineItems);
@@ -781,6 +961,10 @@ const BillingConsole = () => {
         { id: 'priceLists', label: 'Customer Price Lists' },
         { id: 'history', label: 'Historic Invoices & Accounts' },
     ], []);
+    const resolvedServiceLabelOption = EMAIL_SERVICE_OPTIONS.includes(invoiceDraft.emailServiceLabel)
+        ? invoiceDraft.emailServiceLabel
+        : CUSTOM_SERVICE_OPTION;
+    const showCustomServiceLabelInput = resolvedServiceLabelOption === CUSTOM_SERVICE_OPTION;
     const customerNameById = useMemo(() => {
         const map = new Map();
         (customers || []).forEach(customer => {
@@ -813,11 +997,9 @@ const BillingConsole = () => {
             if (!entry.currency && invoice.currency) {
                 entry.currency = invoice.currency;
             }
-            const rawGross = Number(invoice.totals?.gross || 0);
-            const gross = invoice.documentType === 'CreditNote' ? -rawGross : rawGross;
-            const payments = Array.isArray(invoice.payments) ? invoice.payments : [];
-            const paidRaw = payments.reduce((sum, payment) => sum + Number(payment?.amount || 0), 0);
-            const paid = invoice.documentType === 'CreditNote' ? -paidRaw : paidRaw;
+            const isCreditDocument = resolveDocumentKind(invoice) === 'credit';
+            const gross = getSignedGross(invoice, isCreditDocument);
+            const paid = getSignedPaid(invoice, isCreditDocument);
             const outstanding = gross - paid;
             entry.totalGross += gross;
             entry.totalPaid += paid;
@@ -845,11 +1027,9 @@ const BillingConsole = () => {
     }, [invoices, customerNameById]);
     const invoiceLedger = useMemo(() => {
         return (invoices || []).map(invoice => {
-            const rawGross = Number(invoice.totals?.gross || 0);
-            const gross = invoice.documentType === 'CreditNote' ? -rawGross : rawGross;
-            const payments = Array.isArray(invoice.payments) ? invoice.payments : [];
-            const paidRaw = payments.reduce((sum, payment) => sum + Number(payment?.amount || 0), 0);
-            const paid = invoice.documentType === 'CreditNote' ? -paidRaw : paidRaw;
+            const isCreditDocument = resolveDocumentKind(invoice) === 'credit';
+            const gross = getSignedGross(invoice, isCreditDocument);
+            const paid = getSignedPaid(invoice, isCreditDocument);
             const outstanding = gross - paid;
             return {
                 id: invoice.id,
@@ -934,6 +1114,11 @@ const BillingConsole = () => {
 
     const updatePaymentField = useCallback((field, value) => {
         setInvoiceDraft(prev => {
+            if (field === 'paymentReference') {
+                const trimmedValue = String(value || '').trim();
+                const currentReference = String(prev.reference || '').trim();
+                setPaymentReferenceTouched(trimmedValue.length > 0 && trimmedValue !== currentReference);
+            }
             const nextPayment = {
                 ...(prev.payment || {}),
                 [field]: value,
@@ -952,7 +1137,29 @@ const BillingConsole = () => {
                 payment: nextPayment,
             };
         });
-    }, []);
+    }, [setPaymentReferenceTouched]);
+    const paymentReferenceValue = invoiceDraft.payment?.paymentReference || '';
+
+    useEffect(() => {
+        const previousReference = lastReferenceRef.current || '';
+        const currentReference = invoiceDraft.reference || '';
+        const trimmedPrevReference = String(previousReference || '').trim();
+        const trimmedCurrentReference = String(currentReference || '').trim();
+        const trimmedPaymentReference = String(paymentReferenceValue || '').trim();
+        const shouldSyncPaymentReference = (!paymentReferenceTouched || trimmedPaymentReference === trimmedPrevReference)
+            && trimmedCurrentReference !== trimmedPaymentReference;
+
+        if (shouldSyncPaymentReference) {
+            setInvoiceDraft(prev => ({
+                ...prev,
+                payment: {
+                    ...(prev.payment || {}),
+                    paymentReference: currentReference,
+                },
+            }));
+        }
+        lastReferenceRef.current = currentReference;
+    }, [invoiceDraft.reference, paymentReferenceValue, paymentReferenceTouched]);
 
     const updateBuyerIdentifierField = useCallback((field, value) => {
         setInvoiceDraft(prev => ({
@@ -1436,13 +1643,16 @@ const BillingConsole = () => {
 
     const composeInvoiceEmail = useCallback(async (invoice) => {
         if (!invoice) return false;
+        if (composeEmailLockRef.current) return false;
+        composeEmailLockRef.current = true;
         try {
             const customer = customersById.get(invoice.customerId || '') || {};
-            const lines = Array.isArray(invoice.lines) && invoice.lines.length
+            const baseLines = Array.isArray(invoice.lines) && invoice.lines.length
                 ? invoice.lines
                 : Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+            const sanitizedLines = sanitizeInvoiceLines(baseLines, invoice.issueDate || todayISO());
             const pdf = await buildInvoicePdf({
-                invoice: { ...invoice, lines },
+                invoice: { ...invoice, lines: sanitizedLines },
                 organization: {
                     name: user?.companyName || user?.orgName || 'Billing Console',
                     email: user?.email,
@@ -1455,58 +1665,219 @@ const BillingConsole = () => {
                 },
             });
             const emailTo = invoice.customerEmail || customer.email || '';
-            const subjectBase = invoice.reference || invoice.invoiceId || invoice.id || 'Invoice';
+            const documentLabels = getDocumentLabels(invoice);
+            const documentTitle = documentLabels.title;
+            const subjectBase = invoice.reference || invoice.invoiceId || invoice.id || documentTitle;
             const payment = invoice.payment || {};
             const subjectReference = (invoice.reference && invoice.reference.trim())
                 || (payment.paymentReference && payment.paymentReference.trim())
                 || subjectBase;
-            const remittanceReference = (payment.paymentReference && payment.paymentReference.trim()) || subjectReference;
-            const subjectRecipient = invoice.customerName || customer.name || '';
+            const subjectRecipient = (invoice.customerPreferredName || invoice.customerName || '').trim();
             const emailSubject = subjectRecipient
-                ? `Invoice ${subjectReference} - ${subjectRecipient}`
-                : `Invoice ${subjectReference}`;
+                ? `${documentTitle} ${subjectReference} - ${subjectRecipient}`
+                : `${documentTitle} ${subjectReference}`;
+            const preferredClientName = subjectRecipient;
+            const greetingName = preferredClientName || 'there';
+            const effectiveServiceLabel = (invoice.emailServiceLabel || '').trim() || DEFAULT_SERVICE_LABEL;
+            const serviceDateValues = sanitizedLines
+                .map(line => line.lineDate)
+                .filter(Boolean);
+            let servicePeriodText = '';
+            if (serviceDateValues.length) {
+                const sortedDates = [...serviceDateValues].sort();
+                const firstDate = sortedDates[0];
+                const lastDate = sortedDates[sortedDates.length - 1];
+                const formattedFirst = formatDisplayDate(firstDate);
+                const formattedLast = formatDisplayDate(lastDate);
+                if (formattedFirst && formattedLast) {
+                    servicePeriodText = firstDate === lastDate ? formattedFirst : `${formattedFirst} to ${formattedLast}`;
+                } else if (formattedFirst) {
+                    servicePeriodText = formattedFirst;
+                }
+            }
+            if (!servicePeriodText) {
+                servicePeriodText = formatDisplayDate(invoice.issueDate) || '';
+            }
+            const coveringSegment = servicePeriodText ? ` covering the period ${servicePeriodText}` : '';
             const messageLines = [
-                `Hi ${invoice.customerName || customer.name || 'there'},`,
+                `Hello ${greetingName},`,
                 '',
-                `Please find attached invoice ${subjectReference}.`,
-                `Total due: ${formatCurrency(invoice.totals?.gross || 0, invoice.currency || 'GBP')}.`,
-                payment.paymentTerms ? `Payment terms: ${payment.paymentTerms}` : null,
-                `Please use reference ${remittanceReference} when making payment.`,
-                payment.accountName ? `Account name: ${payment.accountName}` : null,
-                payment.sortCode && payment.accountNumber ? `Sort code: ${payment.sortCode} - Account number: ${payment.accountNumber}` : null,
+                `I hope you're well. Please find attached the ${documentLabels.lower} for ${effectiveServiceLabel}${coveringSegment}.`,
                 '',
-                'Kind regards,',
-                user?.displayName || user?.name || user?.email || 'Accounts Team',
-            ].filter(Boolean);
-            const emlBlob = buildEmailDraftBlob({
-                from: user?.email || 'billing@command-console.local',
-                to: emailTo,
-                subject: emailSubject.trim(),
-                body: messageLines.join('\n'),
-                attachment: {
-                    base64: pdf.base64,
-                    filename: pdf.filename,
-                },
-            });
-            const url = URL.createObjectURL(emlBlob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `${pdf.filename.replace(/\.pdf$/i, '') || 'invoice'}.eml`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            setTimeout(() => URL.revokeObjectURL(url), 500);
+                "Payment details are included on the document. If there's anything you need adjusted or clarified, just let me know.",
+                '',
+                'Thankyou for your custom.',
+                '',
+                'Kind Regards,',
+                '',
+                'Stephen Baker',
+                'Principal Founder, CMQUO Ltd',
+                '',
+                `\u{1F4CE} ${documentTitle} ${subjectReference}.pdf`,
+            ];
+            const messageBody = messageLines.join('\n');
+
+            const gmailParams = new URLSearchParams({ view: 'cm', fs: '1', authuser: 'sbakerthe@gmail.com' });
+            if (emailTo) gmailParams.set('to', emailTo);
+            if (emailSubject.trim()) gmailParams.set('su', emailSubject.trim());
+            gmailParams.set('body', messageBody);
+            gmailParams.set('tf', '1');
+            const gmailUrl = `https://mail.google.com/mail/?${gmailParams.toString()}`;
+            const gmailWindow = window.open(gmailUrl, '_blank', 'noopener,noreferrer');
+            if (!gmailWindow) {
+                window.location.href = gmailUrl;
+            }
+
+            if (pdf.blob) {
+                const pdfUrl = URL.createObjectURL(pdf.blob);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = pdfUrl;
+                downloadLink.download = pdf.filename;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                setTimeout(() => URL.revokeObjectURL(pdfUrl), 1500);
+            }
+
             setInvoiceMessage({
                 type: 'success',
-                message: 'Email draft downloaded. Open it in your mail client to review and send.',
+                message: 'Opened Gmail compose for sbakerthe@gmail.com and downloaded the PDF. Attach it in Gmail before sending.',
             });
             return true;
         } catch (error) {
             console.error('Failed to compose invoice email', error);
             setInvoiceMessage({ type: 'error', message: 'Unable to prepare email draft.' });
             return false;
+        } finally {
+            setTimeout(() => {
+                composeEmailLockRef.current = false;
+            }, 500);
         }
     }, [customersById, user]);
+
+    const downloadInvoicePdf = useCallback(async (invoice) => {
+        if (!invoice) {
+            return { success: false, message: 'Document not found.' };
+        }
+        try {
+            const customer = customersById.get(invoice.customerId || '') || {};
+            const baseLines = Array.isArray(invoice.lines) && invoice.lines.length
+                ? invoice.lines
+                : Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+            const sanitizedLines = sanitizeInvoiceLines(baseLines, invoice.issueDate || todayISO());
+            const pdf = await buildInvoicePdf({
+                invoice: { ...invoice, lines: sanitizedLines },
+                organization: {
+                    name: user?.companyName || user?.orgName || 'Billing Console',
+                    email: user?.email,
+                },
+                customer: {
+                    name: invoice.customerName || customer.name,
+                    email: invoice.customerEmail || customer.email,
+                    phone: invoice.customerPhone || customer.phone,
+                    address: invoice.customerAddress || customer.billingAddress,
+                },
+            });
+            if (!pdf?.blob) {
+                return { success: false, message: 'Unable to prepare PDF.' };
+            }
+            const pdfUrl = URL.createObjectURL(pdf.blob);
+            const downloadLink = document.createElement('a');
+            downloadLink.href = pdfUrl;
+            downloadLink.download = pdf.filename;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+            setTimeout(() => URL.revokeObjectURL(pdfUrl), 1500);
+            return { success: true };
+        } catch (error) {
+            console.error('Failed to download document PDF', error);
+            return { success: false, message: 'Unable to download document PDF.' };
+        }
+    }, [customersById, user]);
+
+    const toggleDraftSelection = useCallback((invoiceId) => {
+        if (!invoiceId) return;
+        setSelectedDraftIds(prev => {
+            const next = new Set(prev);
+            if (next.has(invoiceId)) {
+                next.delete(invoiceId);
+            } else {
+                next.add(invoiceId);
+            }
+            return next;
+        });
+    }, []);
+
+    const toggleSelectAllDrafts = useCallback(() => {
+        setSelectedDraftIds(prev => {
+            if (draftInvoices.length === 0) {
+                return prev.size === 0 ? prev : new Set();
+            }
+            if (prev.size === draftInvoices.length) {
+                return new Set();
+            }
+            return new Set(draftInvoices.map(invoice => invoice.id));
+        });
+    }, [draftInvoices]);
+
+    const handleManualDownloadInvoice = useCallback(async (invoiceId) => {
+        if (!invoiceId) {
+            setInvoiceMessage({ type: 'error', message: 'Document not found.' });
+            return;
+        }
+        const invoice = (invoices || []).find(item => item.id === invoiceId);
+        if (!invoice) {
+            setInvoiceMessage({ type: 'error', message: 'Document not found.' });
+            return;
+        }
+        const result = await downloadInvoicePdf(invoice);
+        if (result.success) {
+            setInvoiceMessage({ type: 'success', message: 'Document PDF downloaded.' });
+        } else if (result.message) {
+            setInvoiceMessage({ type: 'error', message: result.message });
+        }
+    }, [invoices, downloadInvoicePdf]);
+
+    const handleBatchDownloadDrafts = useCallback(async () => {
+        const invoicesToDownload = draftInvoices.filter(invoice => selectedDraftIds.has(invoice.id));
+        if (invoicesToDownload.length === 0) {
+            setInvoiceMessage({ type: 'error', message: 'Select at least one draft invoice.' });
+            return;
+        }
+        setBatchActionInProgress(true);
+        const failed = [];
+        let successCount = 0;
+        try {
+            for (const invoice of invoicesToDownload) {
+                const result = await downloadInvoicePdf(invoice);
+                if (result.success) {
+                    successCount += 1;
+                } else {
+                    failed.push({
+                        id: invoice.id,
+                        reference: invoice.reference || invoice.id,
+                        message: result.message,
+                    });
+                }
+            }
+        } finally {
+            setBatchActionInProgress(false);
+            setSelectedDraftIds(new Set(failed.map(item => item.id)));
+        }
+        if (failed.length === 0) {
+            setInvoiceMessage({
+                type: 'success',
+                message: successCount === 1 ? 'Downloaded 1 draft invoice.' : `Downloaded ${successCount} draft invoices.`,
+            });
+        } else {
+            const failedRefs = failed.map(item => item.reference).join(', ');
+            setInvoiceMessage({
+                type: 'error',
+                message: `Downloaded ${successCount} draft invoice${successCount === 1 ? '' : 's'}. ${failed.length} failed (${failedRefs}).`,
+            });
+        }
+    }, [draftInvoices, selectedDraftIds, downloadInvoicePdf]);
 
     const removeInvoiceLine = useCallback((id) => setInvoiceDraft(prev => {
         setInvoiceLinesTouched(true);
@@ -1587,6 +1958,14 @@ const BillingConsole = () => {
             lastCustomerRef.current = '';
             setSelectedCustomerId('');
         }
+        const draftSellerEmail = (draft.seller?.contactEmail || '').trim();
+        const resolvedSellerEmail = draftSellerEmail && draftSellerEmail.toLowerCase() !== 'accounts@cmquo.co.uk'
+            ? draftSellerEmail
+            : DEFAULT_SELLER.contactEmail;
+        const draftReferenceTrimmed = (draft.reference || '').trim();
+        const draftPaymentReferenceTrimmed = (draft.payment?.paymentReference || '').trim();
+        const paymentReferenceIsCustom = !!draftPaymentReferenceTrimmed && draftPaymentReferenceTrimmed !== draftReferenceTrimmed;
+        const upgradedDraftPayment = upgradePaymentDetails(draft.payment || {});
         setInvoiceDraft({
             reference: draft.reference || '',
             buyerReference: draft.buyerReference || '',
@@ -1595,10 +1974,12 @@ const BillingConsole = () => {
             dueDate: draft.dueDate || '',
             currency,
             customerName: draft.customerName || '',
+            customerPreferredName: draft.customerPreferredName || '',
             customerEmail: draft.customerEmail || '',
             customerPhone: draft.customerPhone || '',
             customerAddress: draft.customerAddress || '',
             customerReference: draft.customerReference || '',
+            emailServiceLabel: draft.emailServiceLabel || DEFAULT_SERVICE_LABEL,
             seller: {
                 companyName: draft.seller?.companyName || DEFAULT_SELLER.companyName,
                 companyId: draft.seller?.companyId || DEFAULT_SELLER.companyId,
@@ -1608,7 +1989,7 @@ const BillingConsole = () => {
                 addressCity: draft.seller?.addressCity || DEFAULT_SELLER.addressCity,
                 addressPostal: draft.seller?.addressPostal || DEFAULT_SELLER.addressPostal,
                 addressCountry: draft.seller?.addressCountry || DEFAULT_SELLER.addressCountry,
-                contactEmail: draft.seller?.contactEmail || DEFAULT_SELLER.contactEmail,
+                contactEmail: resolvedSellerEmail,
                 contactPhone: draft.seller?.contactPhone || DEFAULT_SELLER.contactPhone,
             },
             payment: {
@@ -1617,8 +1998,8 @@ const BillingConsole = () => {
                 bankAddress: draft.payment?.bankAddress || DEFAULT_PAYMENT.bankAddress,
                 sortCode: draft.payment?.sortCode || DEFAULT_PAYMENT.sortCode,
                 accountNumber: draft.payment?.accountNumber || DEFAULT_PAYMENT.accountNumber,
-                iban: draft.payment?.iban ?? DEFAULT_PAYMENT.iban,
-                bic: draft.payment?.bic ?? DEFAULT_PAYMENT.bic,
+                iban: upgradedDraftPayment.iban ?? DEFAULT_PAYMENT.iban,
+                bic: upgradedDraftPayment.bic ?? DEFAULT_PAYMENT.bic,
                 paymentTerms: draft.payment?.paymentTerms || DEFAULT_PAYMENT.paymentTerms,
                 paymentReference: draft.payment?.paymentReference || DEFAULT_PAYMENT.paymentReference,
                 endToEndId: draft.payment?.endToEndId || DEFAULT_PAYMENT.endToEndId,
@@ -1631,6 +2012,8 @@ const BillingConsole = () => {
             notes: draft.notes || '',
             lineItems: lines.length ? lines : [blankInvoiceLine(issueDate, currency)],
         });
+        setPaymentReferenceTouched(paymentReferenceIsCustom);
+        lastReferenceRef.current = draft.reference || '';
         setInvoiceDateInput(issueDate);
         setInvoiceLinesTouched(false);
         setInvoiceDateError('');
@@ -1639,33 +2022,38 @@ const BillingConsole = () => {
         setInvoiceMessage(null);
     }, [invoices]);
 
-    const sendInvoice = useCallback(async (invoiceId) => {
+    const sendInvoice = useCallback(async (invoiceId, options = {}) => {
+        const { suppressToast = false } = options || {};
+        const showToast = (payload) => {
+            if (!suppressToast) {
+                setInvoiceMessage(payload);
+            }
+        };
+        const fail = (message) => {
+            showToast({ type: 'error', message });
+            return { success: false, message };
+        };
         if (!invoiceId) {
-            setInvoiceMessage({ type: 'error', message: 'Select a draft invoice to send.' });
-            return false;
+            return fail('Select a draft document to send.');
         }
         if (!user?.uid) {
-            setInvoiceMessage({ type: 'error', message: 'You must be signed in to send invoices.' });
-            return false;
+            return fail('You must be signed in to send documents.');
         }
         const targetInvoice = (invoices || []).find(invoice => invoice.id === invoiceId);
         if (!targetInvoice) {
-            setInvoiceMessage({ type: 'error', message: 'Draft invoice not found.' });
-            return false;
+            return fail('Draft document not found.');
         }
         if (getStatusDisplay(targetInvoice.status) !== INVOICE_STATUS.DRAFT) {
-            setInvoiceMessage({ type: 'error', message: 'Only draft invoices can be sent.' });
-            return false;
+            return fail('Only draft documents can be sent.');
         }
         if (!targetInvoice.customerId) {
-            setInvoiceMessage({ type: 'error', message: 'Assign a customer before sending the invoice.' });
-            return false;
+            return fail('Assign a customer before sending the document.');
         }
+        const documentLabels = getDocumentLabels(targetInvoice);
         const sanitizedLines = sanitizeInvoiceLines(targetInvoice.lines || [], targetInvoice.issueDate || todayISO())
-            .filter(line => line.description && Number.isFinite(line.quantity) && line.quantity > 0);
+            .filter(line => line.description && Number.isFinite(line.quantity) && Math.abs(line.quantity) > 0);
         if (!sanitizedLines.length) {
-            setInvoiceMessage({ type: 'error', message: 'Add at least one invoice line before sending.' });
-            return false;
+            return fail('Add at least one line item before sending.');
         }
         const statusEntry = {
             id: randomId(),
@@ -1683,21 +2071,60 @@ const BillingConsole = () => {
                 lastModifiedAt: serverTimestamp(),
                 lastModifiedBy: user.uid,
             });
-            setInvoiceMessage({ type: 'success', message: 'Invoice sent successfully.' });
-            return true;
+            showToast({ type: 'success', message: `${documentLabels.title} marked as sent.` });
+            return { success: true };
         } catch (error) {
             console.error('Failed to send invoice', error);
-            setInvoiceMessage({ type: 'error', message: 'Unable to send invoice.' });
-            return false;
+            return fail('Unable to mark document as sent.');
         }
     }, [invoices, user?.uid]);
+
+    const handleBatchSendDrafts = useCallback(async () => {
+        const invoicesToSend = draftInvoices.filter(invoice => selectedDraftIds.has(invoice.id));
+        if (invoicesToSend.length === 0) {
+            setInvoiceMessage({ type: 'error', message: 'Select at least one draft invoice.' });
+            return;
+        }
+        setBatchActionInProgress(true);
+        const failed = [];
+        let successCount = 0;
+        try {
+            for (const invoice of invoicesToSend) {
+                const result = await sendInvoice(invoice.id, { suppressToast: true });
+                if (result?.success) {
+                    successCount += 1;
+                } else {
+                    failed.push({
+                        id: invoice.id,
+                        reference: invoice.reference || invoice.id,
+                        message: result?.message,
+                    });
+                }
+            }
+        } finally {
+            setBatchActionInProgress(false);
+            setSelectedDraftIds(new Set(failed.map(item => item.id)));
+        }
+        if (failed.length === 0) {
+            setInvoiceMessage({
+                type: 'success',
+                message: successCount === 1 ? 'Marked 1 draft invoice as sent.' : `Marked ${successCount} draft invoices as sent.`,
+            });
+        } else {
+            const failedRefs = failed.map(item => item.reference).join(', ');
+            setInvoiceMessage({
+                type: 'error',
+                message: `Sent ${successCount} draft invoice${successCount === 1 ? '' : 's'}. ${failed.length} failed (${failedRefs}).`,
+            });
+        }
+    }, [draftInvoices, selectedDraftIds, sendInvoice]);
 
     const openSendModal = useCallback((invoiceId) => {
         const targetId = invoiceId || editingInvoiceId;
         if (!targetId) return;
         setSendModalInvoiceId(targetId);
         setSendModalOpen(true);
-        setSendModalDraftReady(false);
+        setSendModalDraftReady(true);
     }, [editingInvoiceId]);
 
     const closeSendModal = useCallback(() => {
@@ -1725,16 +2152,18 @@ const BillingConsole = () => {
         setEditingInvoiceId(null);
         setSelectedCustomerId('');
         lastCustomerRef.current = '';
+        setPaymentReferenceTouched(false);
+        lastReferenceRef.current = baseDraft.reference || '';
         setSendModalOpen(false);
         setSendModalInvoiceId(null);
         setViewModalInvoiceId(null);
-    }, []);
+    }, [setPaymentReferenceTouched]);
 
     const handleDownloadInvoiceDraft = useCallback(async () => {
         if (!sendModalInvoiceId) return;
         const invoice = (invoices || []).find(item => item.id === sendModalInvoiceId);
         if (!invoice) {
-            setInvoiceMessage({ type: 'error', message: 'Invoice not found for sending.' });
+            setInvoiceMessage({ type: 'error', message: 'Document not found for sending.' });
             return;
         }
         const emailPrepared = await composeInvoiceEmail(invoice);
@@ -1745,14 +2174,18 @@ const BillingConsole = () => {
 
     const handleMarkInvoiceSent = useCallback(async () => {
         if (!sendModalInvoiceId) return;
-        const success = await sendInvoice(sendModalInvoiceId);
-        if (success) {
+        const result = await sendInvoice(sendModalInvoiceId);
+        if (result?.success) {
             closeSendModal();
             resetInvoiceForm();
         }
     }, [sendModalInvoiceId, sendInvoice, closeSendModal, resetInvoiceForm]);
 
     const deleteDraftInvoice = useCallback(async (invoiceId) => {
+        if (!canDeleteInvoices) {
+            setInvoiceMessage({ type: 'error', message: 'You do not have permission to delete invoices.' });
+            return;
+        }
         if (!invoiceId) return;
         const targetInvoice = (invoices || []).find(invoice => invoice.id === invoiceId);
         if (!targetInvoice) {
@@ -1775,7 +2208,37 @@ const BillingConsole = () => {
             console.error('Failed to delete draft invoice', error);
             setInvoiceMessage({ type: 'error', message: 'Unable to delete draft invoice.' });
         }
-    }, [invoices, invoiceMode, editingInvoiceId, resetInvoiceForm]);
+    }, [invoices, invoiceMode, editingInvoiceId, resetInvoiceForm, canDeleteInvoices]);
+
+    const deleteInvoicePermanently = useCallback(async (invoiceId) => {
+        if (!canDeleteInvoices) {
+            setInvoiceMessage({ type: 'error', message: 'You do not have permission to delete invoices.' });
+            return;
+        }
+        if (!invoiceId) return;
+        const targetInvoice = (invoices || []).find(invoice => invoice.id === invoiceId);
+        if (!targetInvoice) {
+            setInvoiceMessage({ type: 'error', message: 'Document not found.' });
+            return;
+        }
+        const status = getStatusDisplay(targetInvoice.status);
+        if (status === INVOICE_STATUS.DRAFT) {
+            await deleteDraftInvoice(invoiceId);
+            return;
+        }
+        const reference = targetInvoice.reference || invoiceId;
+        const confirmed = typeof window === 'undefined'
+            ? true
+            : window.confirm(`Delete invoice ${reference}? This cannot be undone.`);
+        if (!confirmed) return;
+        try {
+            await deleteDoc(doc(db, 'invoices', invoiceId));
+            setInvoiceMessage({ type: 'success', message: 'Invoice deleted.' });
+        } catch (error) {
+            console.error('Failed to delete invoice', error);
+            setInvoiceMessage({ type: 'error', message: 'Unable to delete invoice.' });
+        }
+    }, [invoices, deleteDraftInvoice, canDeleteInvoices]);
 
     const voidInvoice = useCallback(async (invoiceId) => {
         if (!invoiceId) return;
@@ -1785,7 +2248,7 @@ const BillingConsole = () => {
         }
         const targetInvoice = (invoices || []).find(invoice => invoice.id === invoiceId);
         if (!targetInvoice) {
-            setInvoiceMessage({ type: 'error', message: 'Invoice not found.' });
+            setInvoiceMessage({ type: 'error', message: 'Document not found.' });
             return;
         }
         const status = getStatusDisplay(targetInvoice.status);
@@ -1844,6 +2307,8 @@ const BillingConsole = () => {
             initialDraft.currency = nextCurrency;
             initialDraft.lineItems = [blankInvoiceLine(initialDraft.issueDate, nextCurrency)];
             setInvoiceDraft(initialDraft);
+            setPaymentReferenceTouched(false);
+            lastReferenceRef.current = initialDraft.reference || '';
             setInvoiceDateInput(initialDraft.issueDate);
             setInvoiceLinesTouched(false);
             setInvoiceDateError('');
@@ -1856,7 +2321,7 @@ const BillingConsole = () => {
                 setEditingInvoiceId(null);
             }
         }
-    }, [draftInvoices, editingInvoiceId, invoiceMode, invoiceDraft.currency, selectedCustomer, selectedCustomerId, closeSendModal, closeViewModal]);
+    }, [draftInvoices, editingInvoiceId, invoiceMode, invoiceDraft.currency, selectedCustomer, selectedCustomerId, closeSendModal, closeViewModal, setPaymentReferenceTouched]);
 
     const handleIssueDateInputChange = useCallback((rawValue = '') => {
         setInvoiceLinesTouched(true);
@@ -2090,6 +2555,7 @@ const BillingConsole = () => {
             return;
         }
         const isCredit = invoiceDraft.kind === 'credit';
+        const persistedKind = isCredit ? 'credit' : 'invoice';
         const documentType = isCredit ? 'CreditNote' : 'Invoice';
         const preparedLines = isCredit ? sanitized.map(line => ({ ...line, quantity: line.quantity * -1 })) : sanitized;
         const totals = calculateTotals(preparedLines);
@@ -2117,10 +2583,12 @@ const BillingConsole = () => {
                     dueDate: invoiceDraft.dueDate || null,
                     currency: invoiceDraft.currency || 'GBP',
                     customerName: invoiceDraft.customerName.trim(),
+                    customerPreferredName: invoiceDraft.customerPreferredName.trim(),
                     customerEmail: invoiceDraft.customerEmail.trim(),
                     customerPhone: invoiceDraft.customerPhone.trim(),
                     customerAddress: invoiceDraft.customerAddress.trim(),
                     customerReference: invoiceDraft.customerReference.trim(),
+                    emailServiceLabel: (invoiceDraft.emailServiceLabel || '').trim() || DEFAULT_SERVICE_LABEL,
                     seller: {
                         companyName: seller.companyName.trim(),
                         companyId: seller.companyId.trim(),
@@ -2155,8 +2623,9 @@ const BillingConsole = () => {
                     totals,
                     priceBookId: activePriceBook?.id || existingInvoice.priceBookId || null,
                     documentType,
+                    kind: persistedKind,
                     status: existingStatus,
-                statusHistory: existingHistory,
+                    statusHistory: existingHistory,
                     updatedAt: serverTimestamp(),
                     lastModifiedAt: serverTimestamp(),
                     lastModifiedBy: user.uid,
@@ -2177,10 +2646,12 @@ const BillingConsole = () => {
                 dueDate: invoiceDraft.dueDate || null,
                 currency: invoiceDraft.currency || 'GBP',
                 customerName: invoiceDraft.customerName.trim(),
+                customerPreferredName: invoiceDraft.customerPreferredName.trim(),
                 customerEmail: invoiceDraft.customerEmail.trim(),
                 customerPhone: invoiceDraft.customerPhone.trim(),
                 customerAddress: invoiceDraft.customerAddress.trim(),
                 customerReference: invoiceDraft.customerReference.trim(),
+                emailServiceLabel: (invoiceDraft.emailServiceLabel || '').trim() || DEFAULT_SERVICE_LABEL,
                 seller: {
                     companyName: seller.companyName.trim(),
                     companyId: seller.companyId.trim(),
@@ -2221,6 +2692,7 @@ const BillingConsole = () => {
                     changedBy: user.uid,
                 }],
                 documentType,
+                kind: persistedKind,
                 ublVersion: '2.1',
                 priceBookId: activePriceBook?.id || null,
                 createdBy: user.uid,
@@ -2236,6 +2708,8 @@ const BillingConsole = () => {
             const resetDraft = createInitialInvoiceDraft();
             resetDraft.currency = invoiceDraft.currency || 'GBP';
             setInvoiceDraft(resetDraft);
+            setPaymentReferenceTouched(false);
+            lastReferenceRef.current = resetDraft.reference || '';
             setEditingInvoiceId(null);
         } catch (error) {
             console.error('Failed to save invoice', error);
@@ -2244,7 +2718,7 @@ const BillingConsole = () => {
                 message: invoiceMode === 'edit' ? 'Unable to update draft invoice.' : 'Unable to save draft invoice.',
             });
         }
-    }, [selectedCustomer, user, invoiceDraft, invoiceDateInput, invoiceMode, editingInvoiceId, invoices, activePriceBook]);
+    }, [selectedCustomer, user, invoiceDraft, invoiceDateInput, invoiceMode, editingInvoiceId, invoices, activePriceBook, setPaymentReferenceTouched]);
 
     const handleSaveTemplate = useCallback(async (event) => {
         event.preventDefault();
@@ -2252,16 +2726,70 @@ const BillingConsole = () => {
             setTemplateMessage({ type: 'error', message: 'Template name is required.' });
             return;
         }
+        const templateName = templateMeta.name.trim();
         const effectiveIssueDate = invoiceDraft.issueDate || normalizeDateInput(invoiceDateInput) || todayISO();
         const sanitized = sanitizeInvoiceLines(invoiceDraft.lineItems, effectiveIssueDate).filter(line => line.description && line.quantity > 0);
+        const sanitizedCustomerFields = {
+            customerName: trimString(invoiceDraft.customerName),
+            customerPreferredName: trimString(invoiceDraft.customerPreferredName),
+            customerEmail: trimString(invoiceDraft.customerEmail),
+            customerPhone: trimString(invoiceDraft.customerPhone),
+            customerAddress: trimString(invoiceDraft.customerAddress),
+            customerReference: trimString(invoiceDraft.customerReference),
+        };
+        const sellerSource = invoiceDraft.seller || DEFAULT_SELLER;
+        const sanitizedSeller = {
+            companyName: trimString(sellerSource.companyName ?? DEFAULT_SELLER.companyName),
+            companyId: trimString(sellerSource.companyId ?? DEFAULT_SELLER.companyId),
+            vatId: trimString((sellerSource.vatId ?? DEFAULT_SELLER.vatId) ?? ''),
+            lei: trimString((sellerSource.lei ?? DEFAULT_SELLER.lei) ?? ''),
+            addressStreet: trimString(sellerSource.addressStreet ?? DEFAULT_SELLER.addressStreet),
+            addressCity: trimString(sellerSource.addressCity ?? DEFAULT_SELLER.addressCity),
+            addressPostal: trimString(sellerSource.addressPostal ?? DEFAULT_SELLER.addressPostal),
+            addressCountry: trimString(sellerSource.addressCountry ?? DEFAULT_SELLER.addressCountry).toUpperCase(),
+            contactEmail: trimString(sellerSource.contactEmail ?? DEFAULT_SELLER.contactEmail),
+            contactPhone: trimString(sellerSource.contactPhone ?? DEFAULT_SELLER.contactPhone),
+        };
+        const paymentSource = invoiceDraft.payment || DEFAULT_PAYMENT;
+        const sanitizedPayment = {
+            accountName: trimString(paymentSource.accountName ?? DEFAULT_PAYMENT.accountName),
+            bankName: trimString(paymentSource.bankName ?? DEFAULT_PAYMENT.bankName),
+            bankAddress: trimString(paymentSource.bankAddress ?? DEFAULT_PAYMENT.bankAddress),
+            sortCode: trimString(paymentSource.sortCode ?? DEFAULT_PAYMENT.sortCode),
+            accountNumber: trimString(paymentSource.accountNumber ?? DEFAULT_PAYMENT.accountNumber),
+            iban: trimString((paymentSource.iban ?? DEFAULT_PAYMENT.iban) ?? ''),
+            bic: trimString((paymentSource.bic ?? DEFAULT_PAYMENT.bic) ?? ''),
+            paymentTerms: trimString(paymentSource.paymentTerms ?? DEFAULT_PAYMENT.paymentTerms),
+            paymentReference: trimString(paymentSource.paymentReference ?? ''),
+            endToEndId: trimString(paymentSource.endToEndId ?? ''),
+        };
+        const normalizedPayment = upgradePaymentDetails(sanitizedPayment);
+        const sanitizedBuyerIdentifiers = {
+            companyId: trimString(invoiceDraft.buyerIdentifiers?.companyId ?? ''),
+            vatId: trimString(invoiceDraft.buyerIdentifiers?.vatId ?? ''),
+            lei: trimString(invoiceDraft.buyerIdentifiers?.lei ?? ''),
+        };
+        const sanitizedEmailLabel = trimString(invoiceDraft.emailServiceLabel) || DEFAULT_SERVICE_LABEL;
+        const sanitizedReference = trimString(invoiceDraft.reference);
+        const sanitizedBuyerReference = trimString(invoiceDraft.buyerReference);
+        const sanitizedNotes = trimString(invoiceDraft.notes);
+        const invoiceKind = invoiceDraft.kind === 'credit' ? 'credit' : 'invoice';
         try {
             await addDoc(collection(db, 'invoiceTemplates'), {
                 orgId: user?.orgId,
-                name: templateMeta.name.trim(),
+                name: templateName,
                 cadence: templateMeta.cadence,
                 dueInDays: templateMeta.dueInDays ? Number(templateMeta.dueInDays) : null,
                 currency: invoiceDraft.currency || 'GBP',
-                notes: invoiceDraft.notes.trim(),
+                notes: sanitizedNotes,
+                referencePrefix: sanitizedReference,
+                buyerReference: sanitizedBuyerReference,
+                invoiceKind,
+                emailServiceLabel: sanitizedEmailLabel,
+                customerFields: sanitizedCustomerFields,
+                payment: normalizedPayment,
+                seller: sanitizedSeller,
+                buyerIdentifiers: sanitizedBuyerIdentifiers,
                 customerId: selectedCustomer?.id || null,
                 priceBookId: activePriceBook?.id || null,
                 lines: sanitized,
@@ -2277,27 +2805,59 @@ const BillingConsole = () => {
 
     const applyTemplate = useCallback((template) => {
         if (!template) return;
-        if (template.customerId) setSelectedCustomerId(template.customerId);
+        if (template.customerId && template.customerId !== selectedCustomerId) {
+            templateLoadRef.current = true;
+            setSelectedCustomerId(template.customerId);
+        }
         const issueForTemplate = todayISO();
         const templateCurrency = template.currency || invoiceDraft.currency || 'GBP';
         const linesFromTemplate = (template.lines || []).map(item => toInvoiceLine(item, issueForTemplate, templateCurrency));
+        const templateCustomerFields = template.customerFields || null;
+        const templatePayment = template.payment ? upgradePaymentDetails(template.payment) : null;
+        const templateSeller = template.seller || null;
+        const templateBuyerIdentifiers = template.buyerIdentifiers || null;
         setInvoiceDraft(prev => {
-            const paymentTerms = prev.payment?.paymentTerms;
+            const paymentTermsSource = templatePayment?.paymentTerms || prev.payment?.paymentTerms;
             const dueFromTemplate = typeof template.dueInDays === 'number' && Number.isFinite(template.dueInDays)
                 ? addDays(template.dueInDays, issueForTemplate)
-                : computeDueDateFromTerms(issueForTemplate, paymentTerms, prev.dueDate);
-            return {
+                : computeDueDateFromTerms(issueForTemplate, paymentTermsSource, prev.dueDate);
+            const nextPayment = templatePayment
+                ? { ...(prev.payment || {}), ...templatePayment }
+                : (prev.payment || { ...DEFAULT_PAYMENT });
+            const nextSeller = templateSeller
+                ? { ...(prev.seller || {}), ...templateSeller }
+                : (prev.seller || { ...DEFAULT_SELLER });
+            const nextBuyerIdentifiers = templateBuyerIdentifiers
+                ? { ...(prev.buyerIdentifiers || {}), ...templateBuyerIdentifiers }
+                : (prev.buyerIdentifiers || {});
+            const applyField = (value, fallback) => (value !== undefined ? value : fallback);
+            const nextDraft = {
                 ...prev,
-                reference: template.referencePrefix || prev.reference,
-                currency: template.currency || prev.currency,
-                notes: template.notes || prev.notes,
+                kind: applyField(template.invoiceKind, prev.kind || 'invoice'),
+                reference: applyField(template.referencePrefix, prev.reference),
+                buyerReference: applyField(template.buyerReference, prev.buyerReference),
+                currency: templateCurrency,
+                notes: applyField(template.notes, prev.notes),
+                emailServiceLabel: applyField(template.emailServiceLabel, prev.emailServiceLabel),
                 issueDate: issueForTemplate,
                 dueDate: dueFromTemplate,
                 lineItems: linesFromTemplate.length ? linesFromTemplate : prev.lineItems,
+                payment: nextPayment,
+                seller: nextSeller,
+                buyerIdentifiers: nextBuyerIdentifiers,
             };
+            if (templateCustomerFields) {
+                nextDraft.customerName = applyField(templateCustomerFields.customerName, prev.customerName);
+                nextDraft.customerPreferredName = applyField(templateCustomerFields.customerPreferredName, prev.customerPreferredName);
+                nextDraft.customerEmail = applyField(templateCustomerFields.customerEmail, prev.customerEmail);
+                nextDraft.customerPhone = applyField(templateCustomerFields.customerPhone, prev.customerPhone);
+                nextDraft.customerAddress = applyField(templateCustomerFields.customerAddress, prev.customerAddress);
+                nextDraft.customerReference = applyField(templateCustomerFields.customerReference, prev.customerReference);
+            }
+            return nextDraft;
         });
         setTemplateMessage({ type: 'success', message: 'Template loaded.' });
-    }, [invoiceDraft.currency]);
+    }, [invoiceDraft.currency, selectedCustomerId]);
 
     const deleteTemplate = useCallback(async (id) => {
         try {
@@ -2380,6 +2940,11 @@ const BillingConsole = () => {
     }, [selectedCustomer, assignedPriceBook, activePriceBook, customerHasUnsavedChanges, customerDraft]);
 
     useEffect(() => {
+        if (templateLoadRef.current) {
+            templateLoadRef.current = false;
+            lastCustomerRef.current = selectedCustomerId || '';
+            return;
+        }
         if (!selectedCustomerId) {
             lastCustomerRef.current = '';
             setInvoiceDraft(prev => ({
@@ -2822,6 +3387,12 @@ const BillingConsole = () => {
                                         placeholder="Billing contact name"
                                     />
                                     <Input
+                                        className="md:col-span-2"
+                                        value={invoiceDraft.customerPreferredName}
+                                        onChange={event => setInvoiceDraft(prev => ({ ...prev, customerPreferredName: event.target.value }))}
+                                        placeholder="Preferred client name"
+                                    />
+                                    <Input
                                         type="email"
                                         className="md:col-span-2"
                                         value={invoiceDraft.customerEmail}
@@ -2839,6 +3410,44 @@ const BillingConsole = () => {
                                         value={invoiceDraft.customerReference}
                                         onChange={event => setInvoiceDraft(prev => ({ ...prev, customerReference: event.target.value }))}
                                         placeholder="Customer reference / PO"
+                                    />
+                                    <Select
+                                        className="md:col-span-2"
+                                        value={resolvedServiceLabelOption}
+                                        onChange={event => {
+                                            const value = event.target.value;
+                                            setInvoiceDraft(prev => {
+                                                if (value === CUSTOM_SERVICE_OPTION) {
+                                                    return {
+                                                        ...prev,
+                                                        emailServiceLabel: prev.emailServiceLabel || '',
+                                                    };
+                                                }
+                                                return {
+                                                    ...prev,
+                                                    emailServiceLabel: value,
+                                                };
+                                            });
+                                        }}
+                                    >
+                                        {EMAIL_SERVICE_OPTIONS.map(option => (
+                                            <option key={option} value={option}>{option}</option>
+                                        ))}
+                                        <option value={CUSTOM_SERVICE_OPTION}>Custom description...</option>
+                                    </Select>
+                                    {showCustomServiceLabelInput && (
+                                        <Input
+                                            className="md:col-span-2"
+                                            value={invoiceDraft.emailServiceLabel || ''}
+                                            onChange={event => setInvoiceDraft(prev => ({ ...prev, emailServiceLabel: event.target.value }))}
+                                            placeholder="Custom service description"
+                                        />
+                                    )}
+                                    <Input
+                                        className="md:col-span-2"
+                                        value={invoiceDraft.buyerIdentifiers?.companyId || ''}
+                                        onChange={event => updateBuyerIdentifierField('companyId', event.target.value)}
+                                        placeholder="Company number"
                                     />
                                     <TextArea
                                         rows={2}
@@ -3113,12 +3722,119 @@ const BillingConsole = () => {
                         </div>
                     </Card>
 
+                    <Card className="space-y-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <h3 className="text-lg text-red-400">Draft invoices</h3>
+                                <p className="text-sm text-gray-400">Select drafts to print or mark as sent in bulk.</p>
+                            </div>
+                            {draftInvoices.length > 0 && (
+                                <div className="flex flex-col gap-2 md:items-end">
+                                    <label className="flex items-center gap-2 text-sm text-gray-300">
+                                        <input
+                                            type="checkbox"
+                                            className="h-4 w-4 accent-red-500"
+                                            checked={allDraftsSelected}
+                                            onChange={toggleSelectAllDrafts}
+                                        />
+                                        <span>Select all</span>
+                                    </label>
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button
+                                            type="button"
+                                            className="w-auto bg-gray-800 hover:bg-gray-700"
+                                            onClick={handleBatchDownloadDrafts}
+                                            disabled={selectedDraftCount === 0 || batchActionInProgress}
+                                        >
+                                            Batch print
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            className="w-auto bg-green-700 hover:bg-green-600 disabled:bg-green-900/60 disabled:cursor-not-allowed"
+                                            onClick={handleBatchSendDrafts}
+                                            disabled={selectedDraftCount === 0 || batchActionInProgress}
+                                        >
+                                            Batch send
+                                        </Button>
+                                    </div>
+                                    {selectedDraftCount > 0 && (
+                                        <p className="text-xs text-gray-400 text-right">{selectedDraftCount} selected</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        {draftInvoices.length === 0 ? (
+                            <p className="text-sm text-gray-500">No draft invoices waiting to be sent.</p>
+                        ) : (
+                            <div className="space-y-2">
+                                {draftInvoices.map(invoice => {
+                                    const isSelected = selectedDraftIds.has(invoice.id);
+                                    const customerName = customerNameById.get(invoice.customerId) || 'Unassigned';
+                                    const total = formatCurrency(invoice.totals?.gross || 0, invoice.currency || 'GBP');
+                                    return (
+                                        <div key={invoice.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 border border-red-900 bg-gray-900/60 p-3 items-center">
+                                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                                <input
+                                                    type="checkbox"
+                                                    className="h-4 w-4 accent-red-500"
+                                                    checked={isSelected}
+                                                    onChange={() => toggleDraftSelection(invoice.id)}
+                                                />
+                                                <span className="md:hidden">Select</span>
+                                            </label>
+                                            <div>
+                                                <p className="font-semibold">{invoice.reference || invoice.id}</p>
+                                                <p className="text-xs text-gray-400">{invoice.issueDate || 'No date'}</p>
+                                            </div>
+                                            <div className="text-sm text-gray-300">{customerName}</div>
+                                            <div className="text-sm text-gray-300">{total}</div>
+                                            <div className="text-sm text-gray-300">{invoice.issueDate || '-'}</div>
+                                            <div className="flex flex-wrap gap-2 justify-end">
+                                                <Button
+                                                    type="button"
+                                                    className="w-auto bg-gray-800 hover:bg-gray-700"
+                                                    onClick={() => loadDraftForEditing(invoice.id)}
+                                                >
+                                                    Edit
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    className="w-auto bg-green-700 hover:bg-green-600"
+                                                    onClick={() => openSendModal(invoice.id)}
+                                                >
+                                                    Send
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    className="w-auto bg-blue-700 hover:bg-blue-600"
+                                                    onClick={() => handleManualDownloadInvoice(invoice.id)}
+                                                >
+                                                    Download
+                                                </Button>
+                                                {canDeleteInvoices && (
+                                                    <Button
+                                                        type="button"
+                                                        className="w-auto bg-red-800 hover:bg-red-700"
+                                                        onClick={() => deleteDraftInvoice(invoice.id)}
+                                                    >
+                                                        Delete
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </Card>
+
                     <Card className="space-y-3">
-                        <h3 className="text-lg text-red-400">Recent invoices</h3>
-                        {recentInvoices.length === 0 && <p className="text-sm text-gray-500">No invoices recorded yet.</p>}
+                        <h3 className="text-lg text-red-400">Recent invoices &amp; credits</h3>
+                        {recentInvoices.length === 0 && <p className="text-sm text-gray-500">No invoices or credit notes recorded yet.</p>}
                         {recentInvoices.map(invoice => {
                             const status = getStatusDisplay(invoice.status);
                             const customerName = customerNameById.get(invoice.customerId) || 'Unknown customer';
+                            const documentLabels = getDocumentLabels(invoice);
                             return (
                                 <div key={invoice.id} className="border border-red-900 bg-gray-900/60 p-3 grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
                                     <div>
@@ -3127,7 +3843,7 @@ const BillingConsole = () => {
                                     </div>
                                     <div className="text-sm text-gray-300">{customerName}</div>
                                     <div className="text-sm text-gray-300">{formatCurrency(invoice.totals?.gross || 0, invoice.currency || 'GBP')}</div>
-                                    <div className="text-sm text-gray-300">{invoice.documentType || 'Invoice'}</div>
+                                    <div className="text-sm text-gray-300">{documentLabels.title}</div>
                                     <div className="text-sm text-gray-300"><StatusBadge status={invoice.status} /></div>
                                     <div className="flex flex-wrap gap-2 justify-end">
                                         {status === INVOICE_STATUS.DRAFT ? (
@@ -3148,11 +3864,20 @@ const BillingConsole = () => {
                                                 </Button>
                                                 <Button
                                                     type="button"
-                                                    className="w-auto bg-red-800 hover:bg-red-700"
-                                                    onClick={() => deleteDraftInvoice(invoice.id)}
+                                                    className="w-auto bg-blue-700 hover:bg-blue-600"
+                                                    onClick={() => handleManualDownloadInvoice(invoice.id)}
                                                 >
-                                                    Delete
+                                                    Download
                                                 </Button>
+                                                {canDeleteInvoices && (
+                                                    <Button
+                                                        type="button"
+                                                        className="w-auto bg-red-800 hover:bg-red-700"
+                                                        onClick={() => deleteDraftInvoice(invoice.id)}
+                                                    >
+                                                        Delete
+                                                    </Button>
+                                                )}
                                             </>
                                         ) : status === INVOICE_STATUS.SENT ? (
                                             <>
@@ -3165,6 +3890,13 @@ const BillingConsole = () => {
                                                 </Button>
                                                 <Button
                                                     type="button"
+                                                    className="w-auto bg-blue-700 hover:bg-blue-600"
+                                                    onClick={() => handleManualDownloadInvoice(invoice.id)}
+                                                >
+                                                    Download
+                                                </Button>
+                                                <Button
+                                                    type="button"
                                                     className="w-auto bg-red-800 hover:bg-red-700"
                                                     onClick={() => voidInvoice(invoice.id)}
                                                 >
@@ -3172,13 +3904,22 @@ const BillingConsole = () => {
                                                 </Button>
                                             </>
                                         ) : (
-                                            <Button
-                                                type="button"
-                                                className="w-auto bg-gray-800 hover:bg-gray-700"
-                                                onClick={() => openViewModal(invoice.id)}
-                                            >
-                                                View
-                                            </Button>
+                                            <>
+                                                <Button
+                                                    type="button"
+                                                    className="w-auto bg-gray-800 hover:bg-gray-700"
+                                                    onClick={() => openViewModal(invoice.id)}
+                                                >
+                                                    View
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    className="w-auto bg-blue-700 hover:bg-blue-600"
+                                                    onClick={() => handleManualDownloadInvoice(invoice.id)}
+                                                >
+                                                    Download
+                                                </Button>
+                                            </>
                                         )}
                                     </div>
                                 </div>
@@ -3219,20 +3960,21 @@ const BillingConsole = () => {
                     </Card>
 
                     <Card className="space-y-4">
-                        <h3 className="text-lg text-red-400">Invoice ledger</h3>
-                        <div className="hidden md:grid md:grid-cols-6 gap-3 px-3 text-[10px] uppercase tracking-wide text-red-300">
-                            <span>Invoice</span>
+                        <h3 className="text-lg text-red-400">Document ledger</h3>
+                        <div className="hidden md:grid md:grid-cols-7 gap-3 px-3 text-[10px] uppercase tracking-wide text-red-300">
+                            <span>Document</span>
                             <span>Customer</span>
                             <span className="text-right">Issued</span>
                             <span className="text-right">Paid</span>
                             <span className="text-right">Outstanding</span>
                             <span>Status</span>
+                            <span className="text-right">Actions</span>
                         </div>
                         {invoiceLedger.length === 0 && (
-                            <p className="text-sm text-gray-500">No invoices recorded.</p>
+                            <p className="text-sm text-gray-500">No documents recorded.</p>
                         )}
                         {invoiceLedger.map(record => (
-                            <div key={record.id} className="grid grid-cols-1 md:grid-cols-6 gap-3 border border-red-900 bg-gray-900/60 p-3">
+                            <div key={record.id} className="grid grid-cols-1 md:grid-cols-7 gap-3 border border-red-900 bg-gray-900/60 p-3">
                                 <div>
                                     <p className="font-semibold">{record.reference}</p>
                                     <p className="text-xs text-gray-400">{record.issueDate || '-'}</p>
@@ -3244,6 +3986,31 @@ const BillingConsole = () => {
                                     {formatCurrency(record.outstanding, record.currency || 'GBP')}
                                 </div>
                                 <div className="text-sm text-gray-300">{record.status}</div>
+                                <div className="flex flex-wrap gap-2 md:justify-end">
+                                    <Button
+                                        type="button"
+                                        className="w-auto bg-blue-700 hover:bg-blue-600"
+                                        onClick={() => handleManualDownloadInvoice(record.id)}
+                                    >
+                                        Download
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        className="w-auto bg-gray-800 hover:bg-gray-700"
+                                        onClick={() => openViewModal(record.id)}
+                                    >
+                                        View
+                                    </Button>
+                                    {canDeleteInvoices && (
+                                        <Button
+                                            type="button"
+                                            className="w-auto bg-red-800 hover:bg-red-700"
+                                            onClick={() => deleteInvoicePermanently(record.id)}
+                                        >
+                                            Delete
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </Card>
@@ -3253,7 +4020,7 @@ const BillingConsole = () => {
                         <div className="hidden md:grid md:grid-cols-5 gap-3 px-3 text-[10px] uppercase tracking-wide text-red-300">
                             <span>Date</span>
                             <span>Customer</span>
-                            <span>Invoice</span>
+                            <span>Document</span>
                             <span className="text-right">Amount</span>
                             <span>Method</span>
                         </div>

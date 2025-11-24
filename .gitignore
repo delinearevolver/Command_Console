@@ -22,3 +22,7 @@ coverage/
 .DS_Store
 .vscode/
 .idea/
+
+.tmp.driveupload/
+
+UI Errors.txt

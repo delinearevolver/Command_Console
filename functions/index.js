@@ -457,6 +457,7 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
 
   const invoice = event.data.after.data();
   const invoiceId = (invoice.invoiceId || invoice.reference || event.params.invoiceId || '').toString().trim();
+  const invoiceReference = invoice.reference || invoice.invoiceId || invoiceId;
   const issueDate = invoice.issueDate || new Date().toISOString().slice(0, 10);
   const dueDate = invoice.dueDate ? invoice.dueDate : undefined;
   const currency = (invoice.currency || 'GBP').toUpperCase();
@@ -500,39 +501,120 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
     .filter((part) => part.length > 0);
 
   const buyerAddress = {
-    line1: addressParts[0] || '',
+    street: addressParts[0] || '',
     city: addressParts[1] || '',
-    postcode: addressParts[2] || '',
+    postal: addressParts[2] || '',
     country: (customer?.country || invoice.customerCountry || seller.country || 'GB').toUpperCase(),
   };
 
-  const payload = {
-    invoiceId: invoiceId || event.params.invoiceId,
-    issueDate,
-    currency,
-    buyer: {
-      name: buyerName,
-      address: buyerAddress,
+  const computedNet = lines.reduce((acc, line) => acc + (Number(line.qty) || 0) * (Number(line.unitPrice) || 0), 0);
+  const computedVat = lines.reduce((acc, line) => {
+    const rate = Number(line.taxRate ?? 0);
+    return acc + ((Number(line.qty) || 0) * (Number(line.unitPrice) || 0) * (rate / 100));
+  }, 0);
+  const invoiceNet = totals.net ?? computedNet;
+  const invoiceVat = totals.tax ?? computedVat;
+  const invoiceGross = totals.gross ?? (invoiceNet + invoiceVat);
+  const invoiceRounding = totals.rounding ?? 0;
+  const amountPayable = invoiceGross + invoiceRounding;
+
+  const originalLineItems = Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+  const ledgerLines = lines.map((line, idx) => {
+    const source = originalLineItems[idx] || {};
+    const quantity = Number(line.qty) || 0;
+    const taxPercent = Number(line.taxRate ?? source.taxRate ?? 0);
+    const unitPrice = Number(line.unitPrice) || 0;
+    const unitCode = (source.unitCode || source.unit || 'EA').toString().toUpperCase();
+    const taxCategory = taxPercent > 0 ? 'S' : 'Z';
+    return {
+      id: String(line.lineNo || idx + 1),
+      description: line.description,
+      quantity: quantity.toFixed(2),
+      unit_code: unitCode,
+      price: unitPrice.toFixed(2),
+      tax_category: taxCategory,
+      tax_percent: taxPercent.toFixed(2),
+    };
+  });
+
+  const toMoneyString = (value) => (Number(value) || 0).toFixed(2);
+
+  const sellerDetails = invoice.seller || {};
+  const sellerPayload = {
+    name: seller.name,
+    company_id: sellerDetails.companyId || null,
+    vat_id: sellerDetails.vatId || null,
+    lei: sellerDetails.lei || null,
+    address: {
+      street: sellerDetails.addressStreet || seller.line1 || '',
+      city: sellerDetails.addressCity || seller.city || '',
+      postal: sellerDetails.addressPostal || seller.postcode || '',
+      country: (sellerDetails.addressCountry || seller.country || 'GB').toUpperCase(),
     },
-    seller: {
-      name: seller.name,
-      address: {
-        line1: seller.line1,
-        city: seller.city,
-        postcode: seller.postcode,
-        country: seller.country,
-      },
-    },
-    lines,
-    totals,
   };
 
+  const buyerIdentifiers = invoice.buyerIdentifiers || {};
+  const buyerPayload = {
+    name: buyerName,
+    company_id: buyerIdentifiers.companyId || customer?.companyId || null,
+    vat_id: buyerIdentifiers.vatId || customer?.vatId || null,
+    lei: buyerIdentifiers.lei || null,
+    address: buyerAddress,
+  };
+
+  const paymentDetails = invoice.payment || {};
+  const remittanceReference = (paymentDetails.paymentReference && paymentDetails.paymentReference.trim()) || invoiceReference;
+  const structuredReference = paymentDetails.structuredReference && paymentDetails.structuredReference.reference
+    ? {
+        scheme: paymentDetails.structuredReference.scheme || 'SCOR',
+        reference: paymentDetails.structuredReference.reference,
+      }
+    : null;
+  const paymentPayload = {
+    payment_means_code: paymentDetails.paymentMeansCode || '42',
+    payment_terms: paymentDetails.paymentTerms || 'NET 15',
+    end_to_end_id: paymentDetails.endToEndId || `E2E-${remittanceReference.replace(/\s+/g, '-').toUpperCase()}`,
+    iban: paymentDetails.iban || '',
+    bic: paymentDetails.bic || '',
+    remittance_unstructured: remittanceReference,
+    remittance_structured: structuredReference,
+  };
+
+  const payload = {
+    invoice: {
+      id: invoiceReference,
+      issue_date: issueDate,
+      due_date: dueDate || null,
+      currency,
+      buyer_reference: invoice.buyerReference || null,
+      note: invoice.notes || null,
+      tax_point_date: invoice.taxPointDate || null,
+    },
+    seller: sellerPayload,
+    buyer: buyerPayload,
+    lines: ledgerLines,
+    charges: [],
+    allowances: [],
+    totals: {
+      line_extension: toMoneyString(invoiceNet),
+      tax_exclusive: toMoneyString(invoiceNet),
+      tax_total: toMoneyString(invoiceVat),
+      tax_inclusive: toMoneyString(invoiceGross),
+      payable_rounding: toMoneyString(invoiceRounding),
+      payable_amount: toMoneyString(amountPayable),
+    },
+    payment: {
+      ...paymentPayload,
+      iban: paymentPayload.iban || sellerDetails.iban || '',
+      bic: paymentPayload.bic || sellerDetails.bic || '',
+    },
+    attachments: [],
+  };
   if (dueDate) {
-    payload.dueDate = dueDate;
   }
 
   functions.logger.info('Posting invoice to ledger', {
-    invoiceId: payload.invoiceId,
+    invoiceId: payload.invoice.id,
     apiUrl: trimTrailingSlash(baseUrl) + '/invoices',
     lineCount: lines.length,
     totals,
@@ -545,11 +627,11 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
       body: JSON.stringify(payload),
     });
 
-    functions.logger.info('Ledger response received', { invoiceId: payload.invoiceId, status: response.status });
+    functions.logger.info('Ledger response received', { invoiceId: payload.invoice.id, status: response.status });
 
     if (!response.ok) {
       const body = await response.text();
-      functions.logger.error('Ledger API rejected invoice', { invoiceId: payload.invoiceId, status: response.status, body });
+      functions.logger.error('Ledger API rejected invoice', { invoiceId: payload.invoice.id, status: response.status, body });
       await invoiceRef.set({
         syncStatus: 'error',
         syncMessage: `Ledger API error (${response.status})`,
@@ -562,11 +644,11 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
     await invoiceRef.set({
       syncStatus: 'synced',
       syncedAt: FieldValue.serverTimestamp(),
-      ledgerInvoiceId: payload.invoiceId,
+      ledgerInvoiceId: payload.invoice.id,
     }, { merge: true });
-    functions.logger.info('Invoice synced to ledger', { invoiceId: payload.invoiceId });
+    functions.logger.info('Invoice synced to ledger', { invoiceId: payload.invoice.id });
   } catch (error) {
-    functions.logger.error('Failed to sync invoice to ledger', { invoiceId: payload.invoiceId, error });
+    functions.logger.error('Failed to sync invoice to ledger', { invoiceId: payload.invoice.id, error });
     await invoiceRef.set({
       syncStatus: 'error',
       syncMessage: error.message || 'Ledger sync failed',

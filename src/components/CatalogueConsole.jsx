@@ -43,9 +43,23 @@ const toEditableProduct = (product = {}) => ({
     }
 });
 
+const toEditableService = (service = {}) => ({
+    tempId: service.tempId || service.id || randomId(),
+    id: service.id || null,
+    sku: service.sku || '',
+    name: service.name || '',
+    description: service.description || '',
+    category: service.category || '',
+    pricingType: service.pricingType || 'fixed',
+    unitPrice: Number(service.unitPrice) || 0,
+    taxRate: Number(service.taxRate) || 0,
+    estimatedDuration: service.estimatedDuration || '',
+    defaultQuantity: Number(service.defaultQuantity) || 1,
+});
+
 const CatalogueConsole = () => {
     const { user } = useAuth();
-    const { products = [], productPriceBooks = [] } = useData();
+    const { products = [], services = [], productPriceBooks = [] } = useData();
     const [activeTab, setActiveTab] = useState('products');
     const [productsDraft, setProductsDraft] = useState([]);
     const [servicesDraft, setServicesDraft] = useState([]);
@@ -54,6 +68,7 @@ const CatalogueConsole = () => {
     const [productMessage, setProductMessage] = useState(null);
     const [serviceMessage, setServiceMessage] = useState(null);
     const [productsRemovedIds, setProductsRemovedIds] = useState([]);
+    const [servicesRemovedIds, setServicesRemovedIds] = useState([]);
     const [productsView, setProductsView] = useState('list');
     const [productsSearchTerm, setProductsSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('');
@@ -92,6 +107,13 @@ const CatalogueConsole = () => {
             setSelectedProducts([]);
         }
     }, [products, productsHasUnsavedChanges]);
+
+    useEffect(() => {
+        if (!servicesHasUnsavedChanges) {
+            setServicesDraft((services || []).map(toEditableService));
+            setServicesRemovedIds([]);
+        }
+    }, [services, servicesHasUnsavedChanges]);
 
     const categories = useMemo(() => {
         const set = new Set();
@@ -346,10 +368,24 @@ const CatalogueConsole = () => {
     };
 
     const productPriceBookCount = useMemo(() => productPriceBooks.length, [productPriceBooks]);
+    const pricingTypes = ['fixed', 'hourly', 'daily'];
+    const getUnitPriceLabel = (pricingType) => {
+        switch (pricingType) {
+            case 'hourly':
+                return 'Rate per Hour';
+            case 'daily':
+                return 'Rate per Day';
+            default:
+                return 'Project Price';
+        }
+    };
 
     const renderProductsTab = () => {
         const hasActiveFilters = Boolean(productsSearchTerm.trim() || categoryFilter);
         const productSummarySuffix = categoryFilter ? ` in ${categoryFilter}` : '';
+        const quickLookupLimit = 50;
+        const quickLookupItems = filteredAndSortedProducts.slice(0, quickLookupLimit);
+        const hasMoreQuickLookupResults = filteredAndSortedProducts.length > quickLookupLimit;
 
         return (
             <Card className="space-y-4">
@@ -635,6 +671,50 @@ const CatalogueConsole = () => {
                     </div>
                 )}
 
+                <div className="space-y-2 rounded border border-red-900 bg-gray-900/60 p-4">
+                    <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                        <h4 className="text-sm font-semibold text-red-200">Quick SKU lookup</h4>
+                        <span className="text-xs text-gray-400">
+                            {filteredAndSortedProducts.length} match{filteredAndSortedProducts.length === 1 ? '' : 'es'}
+                            {hasActiveFilters ? '' : ' · showing latest catalogue'}
+                        </span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                        Use the filters and search above to narrow down by product name, description, or category. This lightweight list stays visible even when switching catalogue layouts.
+                    </p>
+                    <div className="max-h-56 overflow-y-auto rounded border border-red-900/60">
+                        {quickLookupItems.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-500">
+                                No products to show. {hasActiveFilters ? 'Try clearing your filters.' : 'Add products to populate the lookup.'}
+                            </div>
+                        ) : (
+                            quickLookupItems.map(product => (
+                                <div
+                                    key={product.tempId}
+                                    className="grid grid-cols-1 gap-2 border-b border-red-900/40 px-3 py-2 last:border-b-0 md:grid-cols-5 md:items-center"
+                                >
+                                    <div className="md:col-span-3 text-sm text-gray-100">
+                                        {product.name || 'Unnamed product'}
+                                        {product.description && (
+                                            <span className="block text-xs text-gray-500">
+                                                {product.description}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="md:col-span-2 font-mono text-sm text-red-200 md:text-right">
+                                        {product.sku || 'No SKU'}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                    {hasMoreQuickLookupResults && (
+                        <p className="text-[10px] uppercase tracking-wide text-gray-500">
+                            Showing first {quickLookupLimit} results. Refine your search to narrow further.
+                        </p>
+                    )}
+                </div>
+
                 {productMessage && (
                     <div
                         role="alert"
@@ -651,6 +731,148 @@ const CatalogueConsole = () => {
         );
     };
 
+    const addService = () => {
+        setServicesHasUnsavedChanges(true);
+        setServicesDraft(prev => [...prev, toEditableService()]);
+    };
+
+    const updateService = (tempId, field, value) => {
+        setServicesHasUnsavedChanges(true);
+        setServicesDraft(prev => prev.map(item => {
+            if (item.tempId !== tempId) return item;
+            const next = { ...item };
+            if (field === 'sku') {
+                next.sku = String(value || '').trim().toUpperCase();
+                return next;
+            }
+            if (field === 'pricingType') {
+                const normalized = String(value || '').trim().toLowerCase();
+                next.pricingType = pricingTypes.includes(normalized) ? normalized : 'fixed';
+                if (next.pricingType === 'fixed') {
+                    next.estimatedDuration = '';
+                }
+                return next;
+            }
+            if (field === 'unitPrice' || field === 'taxRate' || field === 'defaultQuantity') {
+                next[field] = value;
+                return next;
+            }
+            if (field === 'estimatedDuration') {
+                next.estimatedDuration = value;
+                return next;
+            }
+            next[field] = value;
+            return next;
+        }));
+    };
+
+    const removeService = (tempId) => {
+        setServicesHasUnsavedChanges(true);
+        setServicesDraft(prev => {
+            const target = prev.find(item => item.tempId === tempId);
+            if (target?.id) {
+                setServicesRemovedIds(current => Array.from(new Set([...current, target.id])));
+            }
+            return prev.filter(item => item.tempId !== tempId);
+        });
+    };
+
+    const saveServices = async () => {
+        if (!user?.orgId) {
+            setServiceMessage({ type: 'error', message: 'Not authenticated. Please log in.' });
+            return;
+        }
+
+        const errors = [];
+        const seenSkus = new Set();
+
+        servicesDraft.forEach((service, index) => {
+            const sku = String(service.sku || '').trim().toUpperCase();
+            const name = String(service.name || '').trim();
+            const pricingType = String(service.pricingType || '').trim().toLowerCase();
+            const unitPrice = Number(service.unitPrice);
+
+            if (!sku) {
+                errors.push(`Service ${index + 1}: SKU is required.`);
+            } else if (seenSkus.has(sku)) {
+                errors.push(`Service ${index + 1}: Duplicate SKU "${sku}".`);
+            } else {
+                seenSkus.add(sku);
+            }
+
+            if (!name) {
+                errors.push(`Service ${index + 1} (${sku || 'unnamed'}): Name is required.`);
+            }
+
+            if (!pricingType || !pricingTypes.includes(pricingType)) {
+                errors.push(`Service ${index + 1} (${sku || 'unnamed'}): Pricing type must be fixed, hourly, or daily.`);
+            }
+
+            if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+                errors.push(`Service ${index + 1} (${sku || 'unnamed'}): Unit price must be greater than 0.`);
+            }
+        });
+
+        if (errors.length) {
+            setServiceMessage({
+                type: 'error',
+                message: 'Please resolve the following issues:\n' + errors.join('\n'),
+            });
+            return;
+        }
+
+        try {
+            setServiceMessage(null);
+            const operations = [];
+
+            servicesDraft.forEach(service => {
+                const pricingType = pricingTypes.includes(String(service.pricingType).toLowerCase())
+                    ? String(service.pricingType).toLowerCase()
+                    : 'fixed';
+                const payload = {
+                    orgId: user.orgId,
+                    type: 'service',
+                    sku: String(service.sku || '').trim().toUpperCase(),
+                    name: String(service.name || '').trim(),
+                    description: String(service.description || '').trim(),
+                    category: String(service.category || '').trim(),
+                    pricingType,
+                    unitPrice: Number(service.unitPrice) || 0,
+                    taxRate: Number(service.taxRate) || 0,
+                    defaultQuantity: Number(service.defaultQuantity) || 1,
+                    estimatedDuration: pricingType === 'hourly' || pricingType === 'daily'
+                        ? String(service.estimatedDuration || '').trim()
+                        : '',
+                    updatedAt: serverTimestamp(),
+                };
+
+                if (service.id) {
+                    operations.push(updateDoc(doc(db, 'services', service.id), payload));
+                } else {
+                    operations.push(addDoc(collection(db, 'services'), { ...payload, createdAt: serverTimestamp() }));
+                }
+            });
+
+            servicesRemovedIds.forEach(serviceId => {
+                operations.push(deleteDoc(doc(db, 'services', serviceId)));
+            });
+
+            if (operations.length) {
+                await Promise.all(operations);
+            }
+
+            setServiceMessage({ type: 'success', message: `${servicesDraft.length} service(s) saved successfully.` });
+            setServicesHasUnsavedChanges(false);
+            setServicesRemovedIds([]);
+        } catch (error) {
+            console.error('Save services error:', error);
+            setServiceMessage({
+                type: 'error',
+                message: `Failed to save services: ${error?.message || 'Unknown error'}. Check console for details.`,
+            });
+        }
+    };
+
     const renderServicesTab = () => (
         <Card className="space-y-4">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -663,10 +885,7 @@ const CatalogueConsole = () => {
                         type="button"
                         className="w-auto"
                         ref={node => { addButtonRefs.current.services = node; }}
-                        onClick={() => {
-                            setServicesHasUnsavedChanges(true);
-                            setServicesDraft(prev => prev.slice());
-                        }}
+                        onClick={addService}
                     >
                         Add Service
                     </Button>
@@ -674,10 +893,7 @@ const CatalogueConsole = () => {
                         type="button"
                         className="w-auto bg-gray-800"
                         disabled={!servicesHasUnsavedChanges}
-                        onClick={() => {
-                            setServiceMessage({ type: 'success', message: 'Service catalogue changes saved.' });
-                            setServicesHasUnsavedChanges(false);
-                        }}
+                        onClick={saveServices}
                     >
                         Save Changes
                     </Button>
@@ -688,14 +904,118 @@ const CatalogueConsole = () => {
                     Add services to build your catalogue
                 </div>
             ) : (
-                <div className="rounded border border-red-900/40 bg-gray-900/40 px-4 py-6 text-sm text-gray-300">
-                    Services will appear here
+                <div className="space-y-4">
+                    {servicesDraft.map(service => {
+                        const showDuration = service.pricingType === 'hourly' || service.pricingType === 'daily';
+                        return (
+                            <div key={service.tempId} className="space-y-4 border border-red-900 bg-gray-900/60 p-4">
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">SKU</label>
+                                        <Input
+                                            value={service.sku}
+                                            onChange={event => updateService(service.tempId, 'sku', event.target.value)}
+                                            placeholder="SRV-001"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Name</label>
+                                        <Input
+                                            value={service.name}
+                                            onChange={event => updateService(service.tempId, 'name', event.target.value)}
+                                            placeholder="Discovery Workshop"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Category</label>
+                                        <Input
+                                            value={service.category}
+                                            onChange={event => updateService(service.tempId, 'category', event.target.value)}
+                                            placeholder="Consulting"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Pricing Type</label>
+                                        <Select
+                                            value={service.pricingType}
+                                            onChange={event => updateService(service.tempId, 'pricingType', event.target.value)}
+                                        >
+                                            {pricingTypes.map(type => (
+                                                <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>
+                                            ))}
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Description</label>
+                                    <TextArea
+                                        rows={3}
+                                        value={service.description}
+                                        onChange={event => updateService(service.tempId, 'description', event.target.value)}
+                                        placeholder="Outline the scope, deliverables, and expectations for this service."
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">{getUnitPriceLabel(service.pricingType)}</label>
+                                        <Input
+                                            type="number"
+                                            step="0.01"
+                                            value={service.unitPrice}
+                                            onChange={event => updateService(service.tempId, 'unitPrice', event.target.value)}
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Tax Rate %</label>
+                                        <Input
+                                            type="number"
+                                            step="0.01"
+                                            value={service.taxRate}
+                                            onChange={event => updateService(service.tempId, 'taxRate', event.target.value)}
+                                            placeholder="20"
+                                        />
+                                    </div>
+                                    {showDuration && (
+                                        <div>
+                                            <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Est. Duration</label>
+                                            <Input
+                                                value={service.estimatedDuration}
+                                                onChange={event => updateService(service.tempId, 'estimatedDuration', event.target.value)}
+                                                placeholder={service.pricingType === 'hourly' ? 'e.g. 6 hours' : 'e.g. 3 days'}
+                                            />
+                                        </div>
+                                    )}
+                                    <div className={`md:col-span-1 ${showDuration ? '' : 'md:col-start-3'}`}>
+                                        <label className="mb-1 block text-xs uppercase tracking-wide text-red-300">Default Qty</label>
+                                        <Input
+                                            type="number"
+                                            value={service.defaultQuantity}
+                                            onChange={event => updateService(service.tempId, 'defaultQuantity', event.target.value)}
+                                            placeholder="1"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-1 flex items-end justify-end">
+                                        <Button
+                                            type="button"
+                                            className="w-auto bg-gray-800"
+                                            onClick={() => removeService(service.tempId)}
+                                        >
+                                            Remove
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
             {serviceMessage && (
                 <div
                     role="status"
-                    className={`rounded border-l-4 px-3 py-2 text-sm ${
+                    className={`rounded border-l-4 px-3 py-2 text-sm whitespace-pre-line ${
                         serviceMessage.type === 'success'
                             ? 'border-green-500 bg-green-900/20 text-green-200'
                             : 'border-yellow-500 bg-yellow-900/30 text-yellow-200'

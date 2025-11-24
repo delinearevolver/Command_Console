@@ -166,7 +166,7 @@ service cloud.firestore {
         && sameOrg(resource.data.orgId)
         && request.resource.data.orgId == resource.data.orgId
         && request.resource.data.customerId == resource.data.customerId;
-      allow delete: if false;
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
     }
 
     match /invoiceTemplates/{templateId} {
