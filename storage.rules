@@ -1,0 +1,48 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return signedIn()
+        ? get(/databases/(default)/documents/users/$(request.auth.uid))
+        : null;
+    }
+
+    function userExists() {
+      return userDoc() != null && userDoc().data != null;
+    }
+
+    function userOrg() {
+      return userExists() ? userDoc().data.orgId : null;
+    }
+
+    function userRole() {
+      return userExists() && userDoc().data.role is string
+        ? userDoc().data.role.lower()
+        : '';
+    }
+
+    function canManageClaims() {
+      let role = userRole();
+      return role == 'owner' || role == 'master' || role == 'admin' || role == 'manager';
+    }
+
+    function claimDoc(claimId) {
+      return get(/databases/(default)/documents/expenseClaims/$(claimId));
+    }
+
+    function claimAccessible(claimId) {
+      let claim = claimDoc(claimId);
+      return claim.exists()
+        && claim.data.orgId == userOrg()
+        && (claim.data.claimantId == request.auth.uid || canManageClaims());
+    }
+
+    match /expenseClaims/{claimId}/receipts/{fileId} {
+      allow read, write: if signedIn() && userExists() && claimAccessible(claimId);
+    }
+  }
+}

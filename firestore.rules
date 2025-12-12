@@ -64,6 +64,19 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/customers/$(customerId)).data.orgId == orgId;
     }
 
+    function claimStatusAllowed(status) {
+      return status in ['draft', 'submitted', 'approved', 'rejected', 'posted', 'paid'];
+    }
+
+    function claimantCanUpdate(oldStatus, newStatus) {
+      return (oldStatus in ['draft', 'submitted']) && (newStatus in ['draft', 'submitted']);
+    }
+
+    function canManageHr() {
+      let role = requesterRole();
+      return role == 'owner' || role == 'master' || role == 'admin' || role == 'manager';
+    }
+
     match /orgs/{orgId} {
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
@@ -225,11 +238,45 @@ service cloud.firestore {
 
     match /expenseClaims/{claimId} {
       allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
-      allow create: if signedIn() && requesterExists() && canManageOperations()
-        && request.resource.data.orgId == requesterOrg();
-      allow update: if signedIn() && requesterExists() && canManageOperations()
+      allow create: if signedIn() && requesterExists()
+        && claimStatusAllowed(request.resource.data.status)
+        && request.resource.data.orgId == requesterOrg()
+        && (
+          canManageOperations()
+          || request.auth.uid == request.resource.data.claimantId
+        );
+      allow update: if signedIn() && requesterExists()
         && sameOrg(resource.data.orgId)
-        && request.resource.data.orgId == resource.data.orgId;
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.claimantId == resource.data.claimantId
+        && claimStatusAllowed(request.resource.data.status)
+        && (
+          canManageOperations()
+          || (request.auth.uid == resource.data.claimantId && claimantCanUpdate(resource.data.status, request.resource.data.status))
+        );
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
+    }
+
+    match /employees/{employeeId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId)
+        && (
+          canManageHr()
+          || request.auth.uid == resource.data.userId
+        );
+      allow create: if signedIn() && requesterExists()
+        && request.resource.data.orgId == requesterOrg()
+        && (
+          canManageHr()
+          || request.auth.uid == request.resource.data.userId
+        );
+      allow update: if signedIn() && requesterExists()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.userId == resource.data.userId
+        && (
+          canManageHr()
+          || request.auth.uid == resource.data.userId
+        );
       allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
     }
 

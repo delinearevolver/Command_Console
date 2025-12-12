@@ -176,6 +176,30 @@ const Launchpad = ({ setActiveConsole, onSignOut }) => (
                         </div>
                     </LaunchpadCard>
 
+                    <LaunchpadCard
+                        className="hover:border-red-500 transition-colors cursor-pointer"
+                        onClick={() => setActiveConsole('payroll')}
+                    >
+                        <div className="text-center space-y-4 p-6">
+                            <div className="text-2xl font-mono text-red-300">PAYROLL</div>
+                            <h2 className="text-2xl font-bold text-red-300">Payroll & Expenses</h2>
+                            <p className="text-gray-400">Employee expenses, AI receipts, and pay runs (stub)</p>
+                            <LaunchpadButton className="w-full">Open Payroll</LaunchpadButton>
+                        </div>
+                    </LaunchpadCard>
+
+                    <LaunchpadCard
+                        className="hover:border-red-500 transition-colors cursor-pointer"
+                        onClick={() => setActiveConsole('training')}
+                    >
+                        <div className="text-center space-y-4 p-6">
+                            <div className="text-2xl font-mono text-red-300">TRAINING</div>
+                            <h2 className="text-2xl font-bold text-red-300">Training & Standards</h2>
+                            <p className="text-gray-400">Employee standards, courses, and evidence tracking</p>
+                            <LaunchpadButton className="w-full">Open Training</LaunchpadButton>
+                        </div>
+                    </LaunchpadCard>
+
                     <LaunchpadCard className="hover:border-red-500 transition-colors opacity-50">
                         <div className="text-center space-y-4 p-6">
                             <div className="text-2xl font-mono text-gray-500">PROJECTS</div>

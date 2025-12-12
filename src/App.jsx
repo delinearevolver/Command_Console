@@ -9,6 +9,8 @@ import { getStorage } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import BillingConsole from './components/BillingConsole.jsx';
 import CatalogueConsole from './components/CatalogueConsole';
+import PayrollConsole from './components/PayrollConsole.jsx';
+import TrainingConsole from './components/TrainingConsole.jsx';
 import CustomersSuppliers from './components/CustomersSuppliers';
 import PurchaseOrderConsole from './components/PurchaseOrderConsole';
 import Launchpad from './components/Launchpad.jsx';
@@ -365,6 +367,44 @@ const AppContent = ({ activeConsole, setActiveConsole }) => {
                     </Button>
                     <div className="mt-4">
                         <PurchaseOrderConsole />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'payroll') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <PayrollConsole />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'training') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <TrainingConsole />
                     </div>
                 </div>
             </div>
@@ -1569,6 +1609,4 @@ const ManagementPanel = () => {
 };
 
 export { useAuth, useTerminology, useData };
-
-
 
