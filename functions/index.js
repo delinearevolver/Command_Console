@@ -8,10 +8,13 @@ const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler"); // Modern syntax for scheduled functions
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
+const {getStorage} = require("firebase-admin/storage");
+const vision = require("@google-cloud/vision");
 const {google} = require("googleapis");
 const functions = require("firebase-functions");
 
 initializeApp();
+const visionClient = new vision.ImageAnnotatorClient();
 
 // Helper to remove undefined values from objects for Firestore
 const cleanForFirestore = (obj) => {
@@ -433,6 +436,49 @@ const computeTotals = (invoiceDoc, lines) => {
     tax: Number(tax.toFixed(2)),
     gross: Number(gross.toFixed(2)),
   };
+};
+
+const computeClaimTotals = (lines = []) => {
+  const safeLines = Array.isArray(lines) ? lines : [];
+  let net = 0;
+  let vat = 0;
+  for (const line of safeLines) {
+    net += Number(line?.netAmount || 0);
+    vat += Number(line?.vatAmount || 0);
+  }
+  const gross = net + vat;
+  return {
+    netTotal: Math.round(net * 100) / 100,
+    vatTotal: Math.round(vat * 100) / 100,
+    grossTotal: Math.round(gross * 100) / 100,
+  };
+};
+
+const ensureLedgerBudget = async (type, limitPerHour = 10) => {
+  const db = getFirestore();
+  const ref = db.collection('system').doc('ledgerCallBudget');
+  const hourKey = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+  let allowed = false;
+  let used = 0;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    const bucket = data[type] || {};
+    used = Number(bucket[hourKey] || 0);
+    if (used >= limitPerHour) {
+      allowed = false;
+      return;
+    }
+    allowed = true;
+    used += 1;
+    tx.set(ref, {
+      [type]: {
+        ...bucket,
+        [hourKey]: used,
+      },
+    }, {merge: true});
+  });
+  return {allowed, used, hourKey};
 };
 
 const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
@@ -888,6 +934,231 @@ exports.syncPurchaseOrderToLedger = onDocumentWritten('purchaseOrders/{poId}', a
   } catch (error) {
     functions.logger.error('Failed to sync purchase order to ledger', { poId: event.params.poId, error });
     await poRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+const parseReceiptText = (text = '', fallback = {}) => {
+  const cleaned = String(text || '').replace(/\r/g, '\n');
+  const lines = cleaned.split('\n').map((l) => l.trim()).filter(Boolean);
+  const vendor = lines[0] || fallback.vendor || '';
+  const dateMatch = cleaned.match(/\b(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})\b/);
+  const numbers = (cleaned.match(/(\d+[.,]\d{2})/g) || []).map((n) => Number(n.replace(',', '.'))).filter((n) => Number.isFinite(n));
+  const grossGuess = numbers.length ? Math.max(...numbers) : (fallback.grossAmount || 0);
+  const vatGuess = numbers.length > 1 ? Math.min(...numbers) : (fallback.vatAmount || 0);
+  const netGuess = grossGuess && vatGuess ? grossGuess - vatGuess : (fallback.netAmount || grossGuess);
+  const vatRate = grossGuess && netGuess ? Math.round(((grossGuess - netGuess) / netGuess) * 100) : (fallback.vatRate || 0);
+  return {
+    vendor,
+    description: fallback.description || 'Receipt',
+    expenseDate: dateMatch ? dateMatch[1].replace(/\./g, '-').replace(/\//g, '-') : fallback.expenseDate || new Date().toISOString().slice(0, 10),
+    netAmount: netGuess || 0,
+    vatAmount: vatGuess || 0,
+    vatRate: vatRate || 0,
+  };
+};
+
+exports.extractReceipt = onCall(async (request) => {
+  assertAuthenticated(request.auth);
+  const claimId = typeof request.data?.claimId === 'string' ? request.data.claimId.trim() : '';
+  const filePath = typeof request.data?.filePath === 'string' ? request.data.filePath.replace(/^\/+/, '') : '';
+  const fileName = typeof request.data?.fileName === 'string' ? request.data.fileName.trim() : '';
+  const lineIndex = Number.isInteger(request.data?.lineIndex) ? request.data.lineIndex : 0;
+
+  if (!claimId || !filePath) {
+    throw new functions.https.HttpsError('invalid-argument', 'claimId and filePath are required.');
+  }
+
+  const db = getFirestore();
+  const claimSnap = await db.collection('expenseClaims').doc(claimId).get();
+  if (!claimSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Expense claim not found.');
+  }
+  const claim = claimSnap.data() || {};
+  const caller = await fetchUserRecord(request.auth.uid);
+  const callerRole = String(caller?.role || '').toLowerCase();
+  const allowedRoles = ['owner', 'master', 'admin', 'manager'];
+  const sameOrg = !claim.orgId || !caller?.orgId || claim.orgId === caller.orgId;
+  const canHandle = (claim.claimantId === request.auth.uid) || (allowedRoles.includes(callerRole) && sameOrg);
+
+  if (!canHandle) {
+    throw new functions.https.HttpsError('permission-denied', 'Not allowed to extract receipts for this claim.');
+  }
+
+  const bucket = getStorage().bucket();
+  const file = bucket.file(filePath);
+  const [exists] = await file.exists();
+  if (!exists) {
+    throw new functions.https.HttpsError('not-found', 'Receipt file not found.');
+  }
+
+  let extracted = null;
+  try {
+    const gcsUri = `gs://${file.bucket.name}/${file.name}`;
+    const [result] = await visionClient.documentTextDetection(gcsUri);
+    const text = result?.fullTextAnnotation?.text || '';
+    extracted = parseReceiptText(text, {
+      vendor: claim.lines?.[lineIndex]?.vendor,
+      description: claim.lines?.[lineIndex]?.description || fileName || 'Expense receipt',
+      netAmount: claim.lines?.[lineIndex]?.netAmount,
+      vatAmount: claim.lines?.[lineIndex]?.vatAmount,
+      expenseDate: claim.lines?.[lineIndex]?.expenseDate || claim.accountingDate,
+    });
+    functions.logger.info('Receipt parsed via Vision', { claimId, filePath, lineIndex });
+  } catch (err) {
+    functions.logger.error('Vision parse failed; falling back', { error: err.message, claimId, filePath });
+  }
+
+  const fallback = extracted || {
+    vendor: claim.lines?.[lineIndex]?.vendor || 'Parsed Vendor',
+    description: claim.lines?.[lineIndex]?.description || (fileName || 'Expense receipt'),
+    expenseDate: claim.accountingDate || new Date().toISOString().slice(0, 10),
+    netAmount: claim.lines?.[lineIndex]?.netAmount || 20,
+    vatAmount: claim.lines?.[lineIndex]?.vatAmount || 4,
+    vatRate: claim.lines?.[lineIndex]?.vatRate || 20,
+  };
+
+  try {
+    const lines = Array.isArray(claim.lines) ? [...claim.lines] : [];
+    if (!lines[lineIndex]) lines[lineIndex] = {};
+    const existing = lines[lineIndex] || {};
+    const merged = {
+      ...existing,
+      storagePath: filePath,
+      extractedData: fallback,
+    };
+    if (!existing.vendor && fallback.vendor) merged.vendor = fallback.vendor;
+    if (!existing.description && fallback.description) merged.description = fallback.description;
+    if (!existing.expenseDate && fallback.expenseDate) merged.expenseDate = fallback.expenseDate;
+    if (!(Number(existing.netAmount) > 0) && Number(fallback.netAmount) > 0) merged.netAmount = fallback.netAmount;
+    if (!(Number(existing.vatAmount) >= 0) && Number(fallback.vatAmount) >= 0) merged.vatAmount = fallback.vatAmount;
+    if (!(Number(existing.vatRate) > 0) && Number(fallback.vatRate) > 0) merged.vatRate = fallback.vatRate;
+
+    lines[lineIndex] = merged;
+    const totals = computeClaimTotals(lines);
+
+    await claimSnap.ref.set({
+      lines,
+      totals,
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: request.auth.token?.email || request.auth.uid || 'extractReceipt',
+    }, {merge: true});
+  } catch (err) {
+    functions.logger.error('Failed to persist extraction to claim', { error: err.message, claimId, filePath, lineIndex });
+  }
+
+  return { extractedLine: fallback };
+});
+
+exports.syncExpenseClaimToLedger = onDocumentWritten('expenseClaims/{claimId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const claim = after.data() || {};
+  const claimRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  const status = (claim.status || '').toLowerCase();
+  if (!['approved', 'paid'].includes(status)) return;
+  if (claim.syncStatus === 'synced' && claim.ledgerExpenseClaimId) return;
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await claimRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const lines = Array.isArray(claim.lines) ? claim.lines : [];
+  if (lines.length === 0) {
+    await claimRef.set({
+      syncStatus: 'error',
+      syncMessage: 'No expense lines to post',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const budget = await ensureLedgerBudget('expenseClaims', 10);
+  if (!budget.allowed) {
+    await claimRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Rate limit exceeded (10/hr)',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (claim.ledgerExpenseClaimId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/expense-claims';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    id: claim.id || event.params.claimId,
+    reference: claim.reference || claim.period || claim.id || event.params.claimId,
+    claimant_id: claim.claimantId || null,
+    claimant_name: claim.claimantName || null,
+    claimant_email: claim.claimantEmail || null,
+    period: claim.period || null,
+    accounting_date: claim.accountingDate || new Date().toISOString().slice(0, 10),
+    currency: (claim.currency || 'GBP').toUpperCase(),
+    totals: claim.totals || computeClaimTotals(lines),
+    lines: lines.map((line, idx) => ({
+      id: String(line.lineNumber || idx + 1),
+      description: line.description || line.vendor || 'Expense',
+      vendor: line.vendor || null,
+      net_amount: Number(line.netAmount) || 0,
+      vat_amount: Number(line.vatAmount) || 0,
+      vat_rate: Number(line.vatRate) || 0,
+      gl_account_id: line.glAccountId || null,
+      cost_center: line.costCenter || claim.costCenter || null,
+      project_id: line.projectId || null,
+      payment_method: line.paymentMethod || 'reimbursable',
+      currency: line.currency ? String(line.currency).toUpperCase() : (claim.currency || 'GBP').toUpperCase(),
+      fx_rate: Number(line.fxRate) || 1,
+      reclaimable: line.reclaimable !== false,
+    })),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected expense claim', { claimId: event.params.claimId, status: response.status, body });
+      await claimRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || claim.id || event.params.claimId;
+
+    await claimRef.set({
+      ledgerExpenseClaimId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Expense claim synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Expense claim synced to ledger', { claimId: event.params.claimId, ledgerExpenseClaimId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync expense claim to ledger', { claimId: event.params.claimId, error });
+    await claimRef.set({
       syncStatus: 'error',
       syncMessage: error.message || 'Ledger sync failed',
       syncPayload: cleanForFirestore(payload),
