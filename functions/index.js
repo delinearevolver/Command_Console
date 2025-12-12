@@ -658,6 +658,244 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
   }
 });
 
+exports.syncCustomerToLedger = onDocumentWritten('customers/{customerId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const customer = after.data() || {};
+  const customerRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await customerRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (customer.ledgerCustomerId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/customers';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    name: customer.name || 'Customer',
+    email: customer.email || null,
+    phone: customer.phone || null,
+    vat_id: customer.vatNumber || null,
+    company_id: customer.companyNumber || null,
+    control_account_id: customer.ledgerControlAccountId || null,
+    currency: (customer.currency || 'GBP').toUpperCase(),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected customer', { customerId: event.params.customerId, status: response.status, body });
+      await customerRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || event.params.customerId;
+
+    await customerRef.set({
+      ledgerCustomerId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Customer synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Customer synced to ledger', { customerId: event.params.customerId, ledgerCustomerId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync customer to ledger', { customerId: event.params.customerId, error });
+    await customerRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.syncSupplierToLedger = onDocumentWritten('suppliers/{supplierId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const supplier = after.data() || {};
+  const supplierRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await supplierRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (supplier.ledgerSupplierId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/suppliers';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    name: supplier.name || 'Supplier',
+    email: supplier.email || null,
+    phone: supplier.phone || null,
+    vat_id: supplier.vatNumber || null,
+    company_id: supplier.companyNumber || null,
+    control_account_id: supplier.ledgerControlAccountId || null,
+    default_expense_account: supplier.defaultExpenseAccount || null,
+    currency: (supplier.currency || 'GBP').toUpperCase(),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected supplier', { supplierId: event.params.supplierId, status: response.status, body });
+      await supplierRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || event.params.supplierId;
+
+    await supplierRef.set({
+      ledgerSupplierId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Supplier synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Supplier synced to ledger', { supplierId: event.params.supplierId, ledgerSupplierId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync supplier to ledger', { supplierId: event.params.supplierId, error });
+    await supplierRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.syncPurchaseOrderToLedger = onDocumentWritten('purchaseOrders/{poId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const po = after.data() || {};
+  const poRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await poRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const lines = Array.isArray(po.lines) ? po.lines : [];
+  if (lines.length === 0) {
+    await poRef.set({
+      syncStatus: 'error',
+      syncMessage: 'No line items to post',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (po.ledgerPurchaseOrderId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/purchase-orders';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    id: po.id || event.params.poId,
+    supplier_id: po.supplierSnapshot?.ledgerSupplierId || po.supplierLedgerId || null,
+    control_account_id: po.supplierSnapshot?.ledgerControlAccountId || null,
+    reference: po.supplierReference || po.id || event.params.poId,
+    issue_date: po.issueDate || new Date().toISOString().slice(0, 10),
+    expected_delivery_date: po.expectedDeliveryDate || null,
+    currency: (po.currency || 'GBP').toUpperCase(),
+    payment_terms_days: Number(po.paymentTermsDays) || 0,
+    delivery_address: po.deliveryAddress || null,
+    lines: lines.map((line, idx) => ({
+      id: String(line.lineNumber || idx + 1),
+      description: line.description || '',
+      quantity: Number(line.quantity) || 0,
+      unit_price: Number(line.unitPrice) || 0,
+      tax_rate: Number(line.taxRate) || 0,
+      expense_account: line.expenseAccount || po.supplierSnapshot?.defaultExpenseAccount || null,
+    })),
+    totals: po.totals || {},
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected purchase order', { poId: event.params.poId, status: response.status, body });
+      await poRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || po.id || event.params.poId;
+
+    await poRef.set({
+      ledgerPurchaseOrderId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Purchase order synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Purchase order synced to ledger', { poId: event.params.poId, ledgerPurchaseOrderId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync purchase order to ledger', { poId: event.params.poId, error });
+    await poRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
 exports.ensureUserDefaults = onDocumentWritten('users/{userId}', async (event) => {
   const after = event.data.after;
   if (!after.exists) return;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, createContext, useContext, useMemo, useCallback } from 'react';
 
 // --- Firebase SDK Imports ---
 // IMPORTANT: You must install firebase in your project: npm install firebase
@@ -9,6 +9,9 @@ import { getStorage } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import BillingConsole from './components/BillingConsole.jsx';
 import CatalogueConsole from './components/CatalogueConsole';
+import CustomersSuppliers from './components/CustomersSuppliers';
+import PurchaseOrderConsole from './components/PurchaseOrderConsole';
+import Launchpad from './components/Launchpad.jsx';
 
 // --- Firebase Configuration ---
 // IMPORTANT: Replace with your actual Firebase config from your project settings.
@@ -220,71 +223,6 @@ const Select = ({ children, ...props }) => <select {...props} className="w-full 
 const Label = ({ className = '', children, ...props }) => (<label {...props} className={`block text-xs uppercase tracking-wide text-gray-400 ${className}`}>{children}</label>);
 const TextArea = (props) => <textarea {...props} className="w-full p-2 bg-gray-900 border border-red-700 focus:border-red-500 focus:outline-none" />;
 
-const HomeView = ({ setActiveConsole, onSignOut }) => (
-    <div className="min-h-screen bg-gray-950 p-6">
-        <div className="max-w-6xl mx-auto space-y-6">
-            <div className="flex justify-end">
-                <div className="w-full sm:w-auto sm:min-w-[180px]">
-                    <Button
-                        type="button"
-                        className="bg-gray-800"
-                        onClick={onSignOut}
-                    >
-                        Sign out
-                    </Button>
-                </div>
-            </div>
-
-            <Card className="text-center bg-black bg-opacity-90">
-                <h1 className="text-3xl font-bold text-red-300">Command Console</h1>
-                <p className="text-gray-400 mt-2">Business management platform</p>
-            </Card>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card
-                    className="hover:border-red-500 transition-colors cursor-pointer"
-                    onClick={() => setActiveConsole('catalogue')}
-                >
-                    <div className="text-center space-y-4 p-6">
-                        <div className="text-5xl">📦</div>
-                        <h2 className="text-2xl font-bold text-red-300">Catalogue</h2>
-                        <p className="text-gray-400">Manage products, services, and marketplace listings</p>
-                        <Button className="w-full">Open Catalogue</Button>
-                    </div>
-                </Card>
-
-                <Card
-                    className="hover:border-red-500 transition-colors cursor-pointer"
-                    onClick={() => setActiveConsole('billing')}
-                >
-                    <div className="text-center space-y-4 p-6">
-                        <div className="text-5xl">💼</div>
-                        <h2 className="text-2xl font-bold text-red-300">Billing</h2>
-                        <p className="text-gray-400">Create invoices, manage customers, track payments</p>
-                        <Button className="w-full">Open Billing</Button>
-                    </div>
-                </Card>
-
-                <Card className="hover:border-red-500 transition-colors opacity-50">
-                    <div className="text-center space-y-4 p-6">
-                        <div className="text-5xl">📊</div>
-                        <h2 className="text-2xl font-bold text-gray-500">Projects</h2>
-                        <p className="text-gray-400">Coming soon</p>
-                    </div>
-                </Card>
-
-                <Card className="hover:border-red-500 transition-colors opacity-50">
-                    <div className="text-center space-y-4 p-6">
-                        <div className="text-5xl">🔄</div>
-                        <h2 className="text-2xl font-bold text-gray-500">Processes</h2>
-                        <p className="text-gray-400">Coming soon</p>
-                    </div>
-                </Card>
-            </div>
-        </div>
-    </div>
-);
-
 const AppContent = ({ activeConsole, setActiveConsole }) => {
     const { user, loading } = useAuth();
 
@@ -309,7 +247,7 @@ const AppContent = ({ activeConsole, setActiveConsole }) => {
                         className="sm:w-auto sm:px-6 w-full bg-gray-800"
                         onClick={() => setActiveConsole('home')}
                     >
-                        ← Back to Home
+                        Back to Home
                     </Button>
                     <div className="mt-4">
                         <CatalogueConsole />
@@ -328,7 +266,7 @@ const AppContent = ({ activeConsole, setActiveConsole }) => {
                         className="sm:w-auto sm:px-6 w-full bg-gray-800"
                         onClick={() => setActiveConsole('home')}
                     >
-                        ← Back to Home
+                        Back to Home
                     </Button>
                     <div className="mt-4">
                         <BillingConsole />
@@ -338,7 +276,102 @@ const AppContent = ({ activeConsole, setActiveConsole }) => {
         );
     }
 
-    return <HomeView setActiveConsole={setActiveConsole} onSignOut={() => signOut(auth)} />;
+    if (activeConsole === 'customers-suppliers') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <CustomersSuppliers />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'crm') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <CustomersSuppliers />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'customers') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <CustomersSuppliers initialTab="customers" lockTab />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'suppliers') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <CustomersSuppliers initialTab="suppliers" lockTab />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeConsole === 'purchase-orders') {
+        return (
+            <div className="min-h-screen bg-gray-950 p-6 space-y-4">
+                <div className="max-w-6xl mx-auto">
+                    <Button
+                        type="button"
+                        className="sm:w-auto sm:px-6 w-full bg-gray-800"
+                        onClick={() => setActiveConsole('home')}
+                    >
+                        Back to Home
+                    </Button>
+                    <div className="mt-4">
+                        <PurchaseOrderConsole />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return <Launchpad setActiveConsole={setActiveConsole} onSignOut={() => signOut(auth)} />;
 };
 
 // --- Main App & Router ---
@@ -1536,3 +1569,6 @@ const ManagementPanel = () => {
 };
 
 export { useAuth, useTerminology, useData };
+
+
+
