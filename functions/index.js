@@ -4,13 +4,214 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 const {onCall} = require("firebase-functions/v2/https");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler"); // Modern syntax for scheduled functions
 const {initializeApp} = require("firebase-admin/app");
-const {getFirestore} = require("firebase-admin/firestore");
+const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {google} = require("googleapis");
 const functions = require("firebase-functions");
 
 initializeApp();
+
+// Helper to remove undefined values from objects for Firestore
+const cleanForFirestore = (obj) => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(cleanForFirestore).filter(x => x !== undefined);
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value);
+    }
+  }
+  return cleaned;
+};
+
+const distinctStrings = (input = []) => {
+  if (!Array.isArray(input)) return [];
+  const values = [];
+  for (const value of input) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed && !values.includes(trimmed)) values.push(trimmed);
+    }
+  }
+  return values;
+};
+
+const mergeStringSets = (...sources) => {
+  const merged = [];
+  for (const source of sources) {
+    if (Array.isArray(source)) {
+      for (const item of source) {
+        if (typeof item === 'string') {
+          const trimmed = item.trim();
+          if (trimmed && !merged.includes(trimmed)) merged.push(trimmed);
+        }
+      }
+    } else if (typeof source === 'string') {
+      const trimmed = source.trim();
+      if (trimmed && !merged.includes(trimmed)) merged.push(trimmed);
+    }
+  }
+  return merged;
+};
+
+const normalizeRoles = (role, roles, ...extras) => {
+  const merged = mergeStringSets(roles, role, ...extras);
+  if (!merged.length) merged.push('worker');
+  return merged;
+};
+
+const arraysMatch = (a = [], b = []) => {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+};
+
+const assertAuthenticated = (auth) => {
+  if (!auth || !auth.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'You must be signed in to perform this action.');
+  }
+};
+
+const fetchUserRecord = async (uid) => {
+  if (!uid) return null;
+  const snapshot = await getFirestore().collection('users').doc(uid).get();
+  return snapshot.exists ? snapshot.data() : null;
+};
+
+const isSuperAdminEmail = (email) => {
+  if (typeof email !== 'string') return false;
+  return email.trim().toLowerCase() === 'delinearevolver@gmail.com';
+};
+
+const callerHasOrgAuthority = (caller, organizationId) => {
+  if (!caller) return false;
+  if (caller.role && ['master', 'owner', 'admin'].includes(String(caller.role).toLowerCase())) return true;
+  const roles = Array.isArray(caller.roles) ? caller.roles.map((role) => String(role).toLowerCase()) : [];
+  if (roles.some((role) => ['master', 'owner', 'admin'].includes(role))) return true;
+  const orgIds = mergeStringSets(caller.orgIds, caller.organizations, caller.orgId);
+  return organizationId ? orgIds.includes(organizationId) : orgIds.length > 0;
+};
+
+exports.createOrganization = onCall(async (request) => {
+  assertAuthenticated(request.auth);
+  const db = getFirestore();
+  const callerEmail = request.auth.token?.email || '';
+  const caller = await fetchUserRecord(request.auth.uid);
+
+  if (!isSuperAdminEmail(callerEmail) && !callerHasOrgAuthority(caller)) {
+    throw new functions.https.HttpsError('permission-denied', 'Only authorised administrators can create new organizations.');
+  }
+
+  const name = typeof request.data?.name === 'string' ? request.data.name.trim() : '';
+  if (!name) {
+    throw new functions.https.HttpsError('invalid-argument', 'Organization name is required.');
+  }
+  const description = typeof request.data?.description === 'string' ? request.data.description.trim() : '';
+
+  const now = FieldValue.serverTimestamp();
+  const orgRef = db.collection('organizations').doc();
+  const payload = cleanForFirestore({
+    name,
+    description: description || null,
+    owners: mergeStringSets([request.auth.uid], caller?.owners),
+    admins: mergeStringSets([request.auth.uid], caller?.admins),
+    members: mergeStringSets([request.auth.uid], caller?.members),
+    createdBy: request.auth.uid,
+    createdAt: now,
+    updatedAt: now,
+    status: 'active',
+    orgId: orgRef.id,
+  });
+  await orgRef.set(payload);
+
+  const aliasRef = db.collection('orgs').doc(orgRef.id);
+  await aliasRef.set(cleanForFirestore({
+    name,
+    description: description || null,
+    ownerId: request.auth.uid,
+    createdAt: now,
+    updatedAt: now,
+  }), { merge: true });
+
+  const mergedOrgIds = mergeStringSets(caller?.orgIds, caller?.organizations, caller?.orgId, orgRef.id);
+  const mergedRoles = normalizeRoles(caller?.role || 'master', caller?.roles, 'master', 'owner');
+  if (!mergedRoles.includes('master')) mergedRoles.unshift('master');
+  if (!mergedRoles.includes('owner')) mergedRoles.push('owner');
+
+  await db.collection('users').doc(request.auth.uid).set(cleanForFirestore({
+    orgId: orgRef.id,
+    orgIds: mergedOrgIds,
+    organizations: mergedOrgIds,
+    role: caller?.role || 'master',
+    roles: mergedRoles,
+    updatedAt: now,
+  }), { merge: true });
+
+  return { organizationId: orgRef.id };
+});
+
+exports.assignOrganization = onCall(async (request) => {
+  assertAuthenticated(request.auth);
+  const userId = typeof request.data?.userId === 'string' ? request.data.userId.trim() : '';
+  const organizationId = typeof request.data?.organizationId === 'string' ? request.data.organizationId.trim() : '';
+
+  if (!userId || !organizationId) {
+    throw new functions.https.HttpsError('invalid-argument', 'User ID and Organization ID are required.');
+  }
+
+  const db = getFirestore();
+  const callerEmail = request.auth.token?.email || '';
+  const callerRecord = await fetchUserRecord(request.auth.uid);
+  const organizationSnap = await db.collection('organizations').doc(organizationId).get();
+
+  if (!organizationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Organization not found.');
+  }
+  const organization = organizationSnap.data();
+
+  if (
+    !isSuperAdminEmail(callerEmail) &&
+    !callerHasOrgAuthority(callerRecord, organizationId) &&
+    !mergeStringSets(organization.admins, organization.owners).includes(request.auth.uid)
+  ) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have permission to assign users to this organization.');
+  }
+
+  const userSnap = await db.collection('users').doc(userId).get();
+  if (!userSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Target user not found.');
+  }
+
+  const userData = userSnap.data() || {};
+  const orgIds = mergeStringSets(userData.orgIds, userData.organizations, userData.orgId, organizationId);
+  const now = FieldValue.serverTimestamp();
+
+  await userSnap.ref.set(cleanForFirestore({
+    orgId: organizationId,
+    orgIds,
+    organizations: orgIds,
+    updatedAt: now,
+  }), { merge: true });
+
+  const members = mergeStringSets(organization.members, userId);
+  await organizationSnap.ref.set(cleanForFirestore({
+    members,
+    updatedAt: now,
+  }), { merge: true });
+
+  await db.collection('orgs').doc(organizationId).set(cleanForFirestore({
+    members,
+    updatedAt: now,
+  }), { merge: true });
+
+  return { userId, organizationId };
+});
 
 // Helper function to initialize OAuth2 client
 const getOauth2Client = () => {
@@ -151,4 +352,798 @@ exports.syncCalendarEvents = onSchedule("every 15 minutes", async (event) => {
     }
   }
   return null;
+});const buildLedgerConfig = () => {
+  const defaults = {
+    baseUrl: (process.env.LEDGER_API_BASE || '').trim(),
+    seller: {
+      name: (process.env.LEDGER_SELLER_NAME || '').trim() || 'CMQUO Limited',
+      line1: (process.env.LEDGER_SELLER_ADDRESS_LINE1 || '').trim(),
+      city: (process.env.LEDGER_SELLER_ADDRESS_CITY || '').trim(),
+      postcode: (process.env.LEDGER_SELLER_ADDRESS_POSTCODE || '').trim(),
+      country: ((process.env.LEDGER_SELLER_ADDRESS_COUNTRY || 'GB')).trim().toUpperCase(),
+    },
+  };
+
+  const config = {}; // Removed functions.config() - using process.env directly
+  const value = (src, fallback) => {
+    if (typeof src === 'string' && src.trim() && src.trim().toLowerCase() !== 'y') {
+      return src.trim();
+    }
+    if (typeof fallback === 'string') {
+      return fallback.trim();
+    }
+    return fallback;
+  };
+
+  const resolvedBaseUrl = value(config.api_base, defaults.baseUrl);
+  return {
+    baseUrl: resolvedBaseUrl,
+    seller: {
+      name: value(config.seller_name, defaults.seller.name),
+      line1: value(config.seller_address_line1, defaults.seller.line1),
+      city: value(config.seller_address_city, defaults.seller.city),
+      postcode: value(config.seller_address_postcode, defaults.seller.postcode),
+      country: value(config.seller_address_country, defaults.seller.country).toUpperCase() || 'GB',
+    },
+  };
+};
+
+const normaliseLines = (invoiceDoc) => {
+  const raw = Array.isArray(invoiceDoc.lineItems) ? invoiceDoc.lineItems : [];
+  return raw
+    .map((line, idx) => {
+      const qty = Number(line.quantity ?? line.qty ?? 0);
+      const unitPrice = Number(line.unitPrice ?? 0);
+      if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice)) {
+        return null;
+      }
+      const taxRate = line.taxRate === undefined ? undefined : Number(line.taxRate);
+      return {
+        lineNo: idx + 1,
+        description: line.description || line.name || line.sku || `Line ${idx + 1}`,
+        qty,
+        unitPrice,
+        taxRate: Number.isFinite(taxRate) ? taxRate : undefined,
+      };
+    })
+    .filter(Boolean);
+};
+
+const computeTotals = (invoiceDoc, lines) => {
+  const totals = typeof invoiceDoc.totals === 'object' && invoiceDoc.totals !== null ? invoiceDoc.totals : {};
+  let net = Number(totals.net);
+  let tax = Number(totals.tax);
+  let gross = Number(totals.gross);
+
+  if (![net, tax, gross].every(Number.isFinite)) {
+    net = 0;
+    tax = 0;
+    for (const line of lines) {
+      const lineNet = line.qty * line.unitPrice;
+      net += lineNet;
+      if (line.taxRate) {
+        tax += lineNet * (line.taxRate / 100);
+      }
+    }
+    gross = net + tax;
+  }
+
+  return {
+    net: Number(net.toFixed(2)),
+    tax: Number(tax.toFixed(2)),
+    gross: Number(gross.toFixed(2)),
+  };
+};
+
+const trimTrailingSlash = (value) => value.replace(/\/+$/, '');
+
+exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (event) => {
+  if (!event.data) {
+    return;
+  }
+
+  const { baseUrl, seller } = buildLedgerConfig();
+  const invoiceRef = event.data.after.ref;
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    functions.logger.warn('Ledger API base URL not configured; skipping sync.', { invoiceId: event.params.invoiceId });
+    await invoiceRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const invoice = event.data.after.data();
+  const invoiceId = (invoice.invoiceId || invoice.reference || event.params.invoiceId || '').toString().trim();
+  const invoiceReference = invoice.reference || invoice.invoiceId || invoiceId;
+  const issueDate = invoice.issueDate || new Date().toISOString().slice(0, 10);
+  const dueDate = invoice.dueDate ? invoice.dueDate : undefined;
+  const currency = (invoice.currency || 'GBP').toUpperCase();
+
+  const lines = normaliseLines(invoice);
+  if (lines.length === 0) {
+    functions.logger.error('Invoice has no billable lines; cannot sync to ledger.', { invoiceId });
+    await invoiceRef.set({
+      syncStatus: 'error',
+      syncMessage: 'No valid invoice lines to post',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const totals = computeTotals(invoice, lines);
+
+  const customerId = invoice.customerId || null;
+  let customer;
+  if (customerId) {
+    try {
+      const snapshot = await getFirestore().collection('customers').doc(customerId).get();
+      if (snapshot.exists) {
+        customer = snapshot.data();
+      }
+    } catch (error) {
+      functions.logger.error('Unable to fetch customer for invoice', { invoiceId, customerId, error });
+    }
+  }
+
+  const buyerName = invoice.customerName || customer?.name || 'Unknown customer';
+  const addressSource = invoice.customerAddress || customer?.billingAddress || '';
+  const normalizedAddress = Array.isArray(addressSource)
+    ? addressSource.join('\n')
+    : String(addressSource || '');
+  const addressParts = normalizedAddress
+    .replace(/\r+/g, '')
+    .split('\n')
+    .flatMap((line) => line.split(','))
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  const buyerAddress = {
+    street: addressParts[0] || '',
+    city: addressParts[1] || '',
+    postal: addressParts[2] || '',
+    country: (customer?.country || invoice.customerCountry || seller.country || 'GB').toUpperCase(),
+  };
+
+  const computedNet = lines.reduce((acc, line) => acc + (Number(line.qty) || 0) * (Number(line.unitPrice) || 0), 0);
+  const computedVat = lines.reduce((acc, line) => {
+    const rate = Number(line.taxRate ?? 0);
+    return acc + ((Number(line.qty) || 0) * (Number(line.unitPrice) || 0) * (rate / 100));
+  }, 0);
+  const invoiceNet = totals.net ?? computedNet;
+  const invoiceVat = totals.tax ?? computedVat;
+  const invoiceGross = totals.gross ?? (invoiceNet + invoiceVat);
+  const invoiceRounding = totals.rounding ?? 0;
+  const amountPayable = invoiceGross + invoiceRounding;
+
+  const originalLineItems = Array.isArray(invoice.lineItems) ? invoice.lineItems : [];
+  const ledgerLines = lines.map((line, idx) => {
+    const source = originalLineItems[idx] || {};
+    const quantity = Number(line.qty) || 0;
+    const taxPercent = Number(line.taxRate ?? source.taxRate ?? 0);
+    const unitPrice = Number(line.unitPrice) || 0;
+    const unitCode = (source.unitCode || source.unit || 'EA').toString().toUpperCase();
+    const taxCategory = taxPercent > 0 ? 'S' : 'Z';
+    return {
+      id: String(line.lineNo || idx + 1),
+      description: line.description,
+      quantity: quantity.toFixed(2),
+      unit_code: unitCode,
+      price: unitPrice.toFixed(2),
+      tax_category: taxCategory,
+      tax_percent: taxPercent.toFixed(2),
+    };
+  });
+
+  const toMoneyString = (value) => (Number(value) || 0).toFixed(2);
+
+  const sellerDetails = invoice.seller || {};
+  const sellerPayload = {
+    name: seller.name,
+    company_id: sellerDetails.companyId || null,
+    vat_id: sellerDetails.vatId || null,
+    lei: sellerDetails.lei || null,
+    address: {
+      street: sellerDetails.addressStreet || seller.line1 || '',
+      city: sellerDetails.addressCity || seller.city || '',
+      postal: sellerDetails.addressPostal || seller.postcode || '',
+      country: (sellerDetails.addressCountry || seller.country || 'GB').toUpperCase(),
+    },
+  };
+
+  const buyerIdentifiers = invoice.buyerIdentifiers || {};
+  const buyerPayload = {
+    name: buyerName,
+    company_id: buyerIdentifiers.companyId || customer?.companyId || null,
+    vat_id: buyerIdentifiers.vatId || customer?.vatId || null,
+    lei: buyerIdentifiers.lei || null,
+    address: buyerAddress,
+  };
+
+  const paymentDetails = invoice.payment || {};
+  const remittanceReference = (paymentDetails.paymentReference && paymentDetails.paymentReference.trim()) || invoiceReference;
+  const structuredReference = paymentDetails.structuredReference && paymentDetails.structuredReference.reference
+    ? {
+        scheme: paymentDetails.structuredReference.scheme || 'SCOR',
+        reference: paymentDetails.structuredReference.reference,
+      }
+    : null;
+  const paymentPayload = {
+    payment_means_code: paymentDetails.paymentMeansCode || '42',
+    payment_terms: paymentDetails.paymentTerms || 'NET 15',
+    end_to_end_id: paymentDetails.endToEndId || `E2E-${remittanceReference.replace(/\s+/g, '-').toUpperCase()}`,
+    iban: paymentDetails.iban || '',
+    bic: paymentDetails.bic || '',
+    remittance_unstructured: remittanceReference,
+    remittance_structured: structuredReference,
+  };
+
+  const payload = {
+    invoice: {
+      id: invoiceReference,
+      issue_date: issueDate,
+      due_date: dueDate || null,
+      currency,
+      buyer_reference: invoice.buyerReference || null,
+      note: invoice.notes || null,
+      tax_point_date: invoice.taxPointDate || null,
+    },
+    seller: sellerPayload,
+    buyer: buyerPayload,
+    lines: ledgerLines,
+    charges: [],
+    allowances: [],
+    totals: {
+      line_extension: toMoneyString(invoiceNet),
+      tax_exclusive: toMoneyString(invoiceNet),
+      tax_total: toMoneyString(invoiceVat),
+      tax_inclusive: toMoneyString(invoiceGross),
+      payable_rounding: toMoneyString(invoiceRounding),
+      payable_amount: toMoneyString(amountPayable),
+    },
+    payment: {
+      ...paymentPayload,
+      iban: paymentPayload.iban || sellerDetails.iban || '',
+      bic: paymentPayload.bic || sellerDetails.bic || '',
+    },
+    attachments: [],
+  };
+  if (dueDate) {
+  }
+
+  functions.logger.info('Posting invoice to ledger', {
+    invoiceId: payload.invoice.id,
+    apiUrl: trimTrailingSlash(baseUrl) + '/invoices',
+    lineCount: lines.length,
+    totals,
+  });
+
+  try {
+    const response = await fetch(trimTrailingSlash(baseUrl) + '/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    functions.logger.info('Ledger response received', { invoiceId: payload.invoice.id, status: response.status });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected invoice', { invoiceId: payload.invoice.id, status: response.status, body });
+      await invoiceRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    await invoiceRef.set({
+      syncStatus: 'synced',
+      syncedAt: FieldValue.serverTimestamp(),
+      ledgerInvoiceId: payload.invoice.id,
+    }, { merge: true });
+    functions.logger.info('Invoice synced to ledger', { invoiceId: payload.invoice.id });
+  } catch (error) {
+    functions.logger.error('Failed to sync invoice to ledger', { invoiceId: payload.invoice.id, error });
+    await invoiceRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.syncCustomerToLedger = onDocumentWritten('customers/{customerId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const customer = after.data() || {};
+  const customerRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await customerRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (customer.ledgerCustomerId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/customers';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    name: customer.name || 'Customer',
+    email: customer.email || null,
+    phone: customer.phone || null,
+    vat_id: customer.vatNumber || null,
+    company_id: customer.companyNumber || null,
+    control_account_id: customer.ledgerControlAccountId || null,
+    currency: (customer.currency || 'GBP').toUpperCase(),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected customer', { customerId: event.params.customerId, status: response.status, body });
+      await customerRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || event.params.customerId;
+
+    await customerRef.set({
+      ledgerCustomerId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Customer synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Customer synced to ledger', { customerId: event.params.customerId, ledgerCustomerId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync customer to ledger', { customerId: event.params.customerId, error });
+    await customerRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.syncSupplierToLedger = onDocumentWritten('suppliers/{supplierId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const supplier = after.data() || {};
+  const supplierRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await supplierRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (supplier.ledgerSupplierId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/suppliers';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    name: supplier.name || 'Supplier',
+    email: supplier.email || null,
+    phone: supplier.phone || null,
+    vat_id: supplier.vatNumber || null,
+    company_id: supplier.companyNumber || null,
+    control_account_id: supplier.ledgerControlAccountId || null,
+    default_expense_account: supplier.defaultExpenseAccount || null,
+    currency: (supplier.currency || 'GBP').toUpperCase(),
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected supplier', { supplierId: event.params.supplierId, status: response.status, body });
+      await supplierRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || event.params.supplierId;
+
+    await supplierRef.set({
+      ledgerSupplierId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Supplier synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Supplier synced to ledger', { supplierId: event.params.supplierId, ledgerSupplierId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync supplier to ledger', { supplierId: event.params.supplierId, error });
+    await supplierRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.syncPurchaseOrderToLedger = onDocumentWritten('purchaseOrders/{poId}', async (event) => {
+  if (!event.data || !event.data.after?.exists) return;
+  const after = event.data.after;
+  const po = after.data() || {};
+  const poRef = after.ref;
+  const { baseUrl } = buildLedgerConfig();
+
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    await poRef.set({
+      syncStatus: 'blocked',
+      syncMessage: 'Ledger integration not configured',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const lines = Array.isArray(po.lines) ? po.lines : [];
+  if (lines.length === 0) {
+    await poRef.set({
+      syncStatus: 'error',
+      syncMessage: 'No line items to post',
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return;
+  }
+
+  const ledgerId = (po.ledgerPurchaseOrderId || '').trim();
+  const endpointBase = trimTrailingSlash(baseUrl) + '/purchase-orders';
+  const endpoint = ledgerId ? `${endpointBase}/${encodeURIComponent(ledgerId)}` : endpointBase;
+  const method = ledgerId ? 'PATCH' : 'POST';
+
+  const payload = {
+    id: po.id || event.params.poId,
+    supplier_id: po.supplierSnapshot?.ledgerSupplierId || po.supplierLedgerId || null,
+    control_account_id: po.supplierSnapshot?.ledgerControlAccountId || null,
+    reference: po.supplierReference || po.id || event.params.poId,
+    issue_date: po.issueDate || new Date().toISOString().slice(0, 10),
+    expected_delivery_date: po.expectedDeliveryDate || null,
+    currency: (po.currency || 'GBP').toUpperCase(),
+    payment_terms_days: Number(po.paymentTermsDays) || 0,
+    delivery_address: po.deliveryAddress || null,
+    lines: lines.map((line, idx) => ({
+      id: String(line.lineNumber || idx + 1),
+      description: line.description || '',
+      quantity: Number(line.quantity) || 0,
+      unit_price: Number(line.unitPrice) || 0,
+      tax_rate: Number(line.taxRate) || 0,
+      expense_account: line.expenseAccount || po.supplierSnapshot?.defaultExpenseAccount || null,
+    })),
+    totals: po.totals || {},
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      functions.logger.error('Ledger API rejected purchase order', { poId: event.params.poId, status: response.status, body });
+      await poRef.set({
+        syncStatus: 'error',
+        syncMessage: `Ledger API error (${response.status})`,
+        syncPayload: cleanForFirestore(payload),
+        syncUpdatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return;
+    }
+
+    const body = await response.json().catch(() => ({}));
+    const resolvedId = body.id || ledgerId || po.id || event.params.poId;
+
+    await poRef.set({
+      ledgerPurchaseOrderId: resolvedId,
+      syncStatus: 'synced',
+      syncMessage: 'Purchase order synced to ledger',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    functions.logger.info('Purchase order synced to ledger', { poId: event.params.poId, ledgerPurchaseOrderId: resolvedId });
+  } catch (error) {
+    functions.logger.error('Failed to sync purchase order to ledger', { poId: event.params.poId, error });
+    await poRef.set({
+      syncStatus: 'error',
+      syncMessage: error.message || 'Ledger sync failed',
+      syncPayload: cleanForFirestore(payload),
+      syncUpdatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+});
+
+exports.ensureUserDefaults = onDocumentWritten('users/{userId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const user = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+
+  const normalizedRole = typeof user.role === 'string' && user.role.trim() ? user.role.trim() : 'worker';
+  if (normalizedRole !== user.role) {
+    updates.role = normalizedRole;
+    shouldWrite = true;
+  }
+
+  const desiredRoles = normalizeRoles(updates.role || user.role, user.roles);
+  if (!arraysMatch(desiredRoles, Array.isArray(user.roles) ? user.roles : [])) {
+    updates.roles = desiredRoles;
+    shouldWrite = true;
+  }
+
+  const normalizedProjects = distinctStrings(user.assignedProjects);
+  if (!arraysMatch(normalizedProjects, Array.isArray(user.assignedProjects) ? user.assignedProjects : [])) {
+    updates.assignedProjects = normalizedProjects;
+    shouldWrite = true;
+  }
+
+  const normalizedProcesses = distinctStrings(user.assignedProcesses);
+  if (!arraysMatch(normalizedProcesses, Array.isArray(user.assignedProcesses) ? user.assignedProcesses : [])) {
+    updates.assignedProcesses = normalizedProcesses;
+    shouldWrite = true;
+  }
+
+  const orgIds = mergeStringSets(user.orgIds, user.organizations, user.orgId);
+  if (orgIds.length) {
+    if (!arraysMatch(orgIds, Array.isArray(user.orgIds) ? user.orgIds : [])) {
+      updates.orgIds = orgIds;
+      shouldWrite = true;
+    }
+    if (!arraysMatch(orgIds, Array.isArray(user.organizations) ? user.organizations : [])) {
+      updates.organizations = orgIds;
+      shouldWrite = true;
+    }
+    if (!orgIds.includes(typeof user.orgId === 'string' ? user.orgId : '')) {
+      updates.orgId = orgIds[0];
+      shouldWrite = true;
+    }
+  }
+
+  if (!user.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.hardenProjectContext = onDocumentWritten('projects/{projectId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const project = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+
+  const programId = typeof project.programId === 'string' ? project.programId.trim() : '';
+  if (programId) {
+    const programSnap = await db.collection('programs').doc(programId).get();
+    if (programSnap.exists) {
+      const program = programSnap.data() || {};
+      const programOrgId = mergeStringSets(program.orgId, program.orgIds)[0];
+      if (programOrgId && project.orgId !== programOrgId) {
+        updates.orgId = programOrgId;
+        shouldWrite = true;
+      }
+      if (program.name && project.programName !== program.name) {
+        updates.programName = program.name;
+        shouldWrite = true;
+      }
+      if (project.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!project.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  }
+
+  if (!project.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.syncProcessMetadata = onDocumentWritten('processes/{processId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const process = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+  const projectId = typeof process.projectId === 'string' ? process.projectId.trim() : '';
+
+  if (projectId) {
+    const projectSnap = await db.collection('projects').doc(projectId).get();
+    if (projectSnap.exists) {
+      const project = projectSnap.data() || {};
+      const projectOrgId = mergeStringSets(project.orgId, project.orgIds)[0];
+      if (projectOrgId && process.orgId !== projectOrgId) {
+        updates.orgId = projectOrgId;
+        shouldWrite = true;
+      }
+      const programId = typeof project.programId === 'string' ? project.programId.trim() : '';
+      if (programId && process.programId !== programId) {
+        updates.programId = programId;
+        shouldWrite = true;
+      }
+      if (project.name && process.projectName !== project.name) {
+        updates.projectName = project.name;
+        shouldWrite = true;
+      }
+      if (process.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!process.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  } else if (!process.isOrphaned) {
+    updates.isOrphaned = true;
+    shouldWrite = true;
+  }
+
+  if (!process.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
+});
+
+exports.syncTaskMetadata = onDocumentWritten('tasks/{taskId}', async (event) => {
+  const after = event.data.after;
+  if (!after.exists) return;
+
+  const task = after.data() || {};
+  const updates = {};
+  let shouldWrite = false;
+  const db = getFirestore();
+
+  const allowedStatuses = ['todo', 'inprogress', 'done'];
+  const currentStatus = typeof task.status === 'string' ? task.status.trim().toLowerCase() : '';
+  if (!allowedStatuses.includes(currentStatus)) {
+    updates.status = 'todo';
+    shouldWrite = true;
+  }
+
+  const normalizedAssignees = distinctStrings(task.assignedTo);
+  if (!arraysMatch(normalizedAssignees, Array.isArray(task.assignedTo) ? task.assignedTo : [])) {
+    updates.assignedTo = normalizedAssignees;
+    shouldWrite = true;
+  }
+
+  const processId = typeof task.processId === 'string' ? task.processId.trim() : '';
+  const projectId = typeof task.projectId === 'string' ? task.projectId.trim() : '';
+
+  let processData = null;
+
+  if (processId) {
+    const processSnap = await db.collection('processes').doc(processId).get();
+    if (processSnap.exists) {
+      processData = processSnap.data() || {};
+      const processOrgId = mergeStringSets(processData.orgId, processData.orgIds)[0];
+      if (processOrgId && task.orgId !== processOrgId) {
+        updates.orgId = processOrgId;
+        shouldWrite = true;
+      }
+
+      const processProjectId = typeof processData.projectId === 'string' ? processData.projectId.trim() : '';
+      if (processProjectId && processProjectId !== projectId) {
+        updates.projectId = processProjectId;
+        shouldWrite = true;
+      }
+
+      const processProgramId = typeof processData.programId === 'string' ? processData.programId.trim() : '';
+      if (processProgramId && task.programId !== processProgramId) {
+        updates.programId = processProgramId;
+        shouldWrite = true;
+      }
+
+      if (processData.name && task.processName !== processData.name) {
+        updates.processName = processData.name;
+        shouldWrite = true;
+      }
+
+      if (task.isOrphaned) {
+        updates.isOrphaned = false;
+        shouldWrite = true;
+      }
+    } else if (!task.isOrphaned) {
+      updates.isOrphaned = true;
+      shouldWrite = true;
+    }
+  }
+
+  const effectiveProjectId = updates.projectId || projectId;
+  if (effectiveProjectId) {
+    const projectSnap = await db.collection('projects').doc(effectiveProjectId).get();
+    if (projectSnap.exists) {
+      const projectData = projectSnap.data() || {};
+      const projectOrgId = mergeStringSets(projectData.orgId, projectData.orgIds)[0];
+      if (projectOrgId && (updates.orgId || task.orgId) !== projectOrgId) {
+        updates.orgId = projectOrgId;
+        shouldWrite = true;
+      }
+      const projectProgramId = typeof projectData.programId === 'string' ? projectData.programId.trim() : '';
+      if (projectProgramId && task.programId !== projectProgramId && updates.programId !== projectProgramId) {
+        updates.programId = projectProgramId;
+        shouldWrite = true;
+      }
+      if (projectData.name && task.projectName !== projectData.name) {
+        updates.projectName = projectData.name;
+        shouldWrite = true;
+      }
+    }
+  }
+
+  if (!task.createdAt) {
+    updates.createdAt = FieldValue.serverTimestamp();
+    shouldWrite = true;
+  }
+
+  if (shouldWrite) {
+    updates.updatedAt = FieldValue.serverTimestamp();
+    await after.ref.set(cleanForFirestore(updates), { merge: true });
+  }
 });

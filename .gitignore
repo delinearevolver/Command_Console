@@ -3,3 +3,26 @@ dist
 .firebase
 .env*
 firebase-debug.log
+
+# deps
+
+.pnpm-store/
+
+# env & secrets
+.env
+
+# builds
+build/
+.next/
+out/
+
+# logs & misc
+*.log
+coverage/
+.DS_Store
+.vscode/
+.idea/
+
+.tmp.driveupload/
+
+UI Errors.txt

@@ -1,0 +1,286 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function requester() {
+      return signedIn() ? get(/databases/$(database)/documents/users/$(request.auth.uid)) : null;
+    }
+
+    function requesterExists() {
+      return requester() != null && requester().data != null;
+    }
+
+    function requesterOrg() {
+      return requesterExists() ? requester().data.orgId : null;
+    }
+
+    function sameOrg(orgId) {
+      return requesterOrg() != null && requesterOrg() == orgId;
+    }
+
+    function normalizeRoleValue(role) {
+      return role is string ? role.lower() : '';
+    }
+
+    function requesterRole() {
+      return requesterExists() ? normalizeRoleValue(requester().data.role) : '';
+    }
+
+    function isOwnerRole() {
+      let role = requesterRole();
+      return role == 'owner' || role == 'master';
+    }
+
+    function canManageOperations() {
+      let role = requesterRole();
+      return role == 'owner' || role == 'master' || role == 'admin' || role == 'manager';
+    }
+
+    function canAccessAdmin() {
+      let role = requesterRole();
+      return role == 'owner' || role == 'master' || role == 'admin';
+    }
+
+    function documentRole() {
+      return normalizeRoleValue(resource.data.role);
+    }
+
+    function incomingRole() {
+      return request.resource.data.role is string ? request.resource.data.role.lower() : documentRole();
+    }
+
+    function priceBookBelongsToOrg(priceBookId, orgId) {
+      return priceBookId is string
+        && exists(/databases/$(database)/documents/priceBooks/$(priceBookId))
+        && get(/databases/$(database)/documents/priceBooks/$(priceBookId)).data.orgId == orgId;
+    }
+
+    function customerBelongsToOrg(customerId, orgId) {
+      return customerId is string
+        && exists(/databases/$(database)/documents/customers/$(customerId))
+        && get(/databases/$(database)/documents/customers/$(customerId)).data.orgId == orgId;
+    }
+
+    match /orgs/{orgId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0;
+      allow get, list: if signedIn() && requesterExists() && sameOrg(orgId);
+      allow update: if signedIn() && requesterExists() && sameOrg(orgId) && canAccessAdmin()
+        && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.orgId is string
+        && request.resource.data.role is string;
+      allow get: if (request.auth != null && request.auth.uid == userId)
+        || (signedIn() && requesterExists() && sameOrg(resource.data.orgId));
+      allow list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow update: if signedIn() && requesterExists() && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && (
+          (request.auth.uid == userId && incomingRole() == documentRole())
+          || (canAccessAdmin()
+              && ((incomingRole() != 'owner' && documentRole() != 'owner') || isOwnerRole()))
+        );
+      allow delete: if false;
+    }
+
+    match /programs/{programId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId);
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /projects/{projectId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && request.resource.data.programId is string
+        && exists(/databases/$(database)/documents/programs/$(request.resource.data.programId))
+        && get(/databases/$(database)/documents/programs/$(request.resource.data.programId)).data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.programId == resource.data.programId;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /processes/{processId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.projectId is string
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.orgId == requesterOrg()
+        && (!("programId" in request.resource.data) ||
+            get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.programId == request.resource.data.programId)
+        && (!("orgId" in request.resource.data) || request.resource.data.orgId == requesterOrg());
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.programId == resource.data.programId;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /customers/{customerId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && (!("priceBookId" in request.resource.data) || request.resource.data.priceBookId == null || priceBookBelongsToOrg(request.resource.data.priceBookId, requesterOrg()));
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && (!("priceBookId" in request.resource.data) || request.resource.data.priceBookId == null || priceBookBelongsToOrg(request.resource.data.priceBookId, requesterOrg()));
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /priceBooks/{priceBookId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && (!("customerId" in request.resource.data) || request.resource.data.customerId == null || customerBelongsToOrg(request.resource.data.customerId, requesterOrg()));
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && (!("customerId" in request.resource.data) || request.resource.data.customerId == resource.data.customerId || customerBelongsToOrg(request.resource.data.customerId, requesterOrg()));
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && customerBelongsToOrg(request.resource.data.customerId, requesterOrg());
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.customerId == resource.data.customerId;
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
+    }
+
+    match /invoiceTemplates/{templateId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && (!("customerId" in request.resource.data) || request.resource.data.customerId == null || customerBelongsToOrg(request.resource.data.customerId, requesterOrg()))
+        && (!("priceBookId" in request.resource.data) || request.resource.data.priceBookId == null || priceBookBelongsToOrg(request.resource.data.priceBookId, requesterOrg()));
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && (!("customerId" in request.resource.data) || request.resource.data.customerId == resource.data.customerId || customerBelongsToOrg(request.resource.data.customerId, requesterOrg()))
+        && (!("priceBookId" in request.resource.data) || request.resource.data.priceBookId == resource.data.priceBookId || priceBookBelongsToOrg(request.resource.data.priceBookId, requesterOrg()));
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /suppliers/{supplierId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
+    }
+
+    match /sites/{siteId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /purchaseOrders/{poId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
+    }
+
+    match /goodsReceipts/{grnId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /expenseClaims/{claimId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId);
+    }
+
+    match /interactions/{interactionId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists()
+        && request.resource.data.orgId == requesterOrg();
+      allow update: if signedIn() && requesterExists()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if (signedIn() && requesterExists() && canAccessAdmin() && sameOrg(resource.data.orgId))
+        || (signedIn() && resource.data.createdBy == request.auth.uid && sameOrg(resource.data.orgId));
+    }
+
+    match /products/{productId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.orgId == requesterOrg()
+        && request.resource.data.type == 'product';
+      allow update: if signedIn() && requesterExists() && canManageOperations()
+        && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.type == resource.data.type;
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+
+    match /tasks/{taskId} {
+      allow get, list: if signedIn() && requesterExists() && sameOrg(resource.data.orgId);
+      allow create: if signedIn() && requesterExists() && canManageOperations()
+        && request.resource.data.projectId is string
+        && exists(/databases/$(database)/documents/projects/$(request.resource.data.projectId))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.orgId == requesterOrg()
+        && (!("orgId" in request.resource.data) || request.resource.data.orgId == requesterOrg())
+        && (!("programId" in request.resource.data) ||
+            get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.programId == request.resource.data.programId)
+        && (!("processId" in request.resource.data) ||
+            (request.resource.data.processId is string
+             && exists(/databases/$(database)/documents/processes/$(request.resource.data.processId))
+             && get(/databases/$(database)/documents/processes/$(request.resource.data.processId)).data.projectId == request.resource.data.projectId))
+        && (!("status" in request.resource.data) || request.resource.data.status in ['todo', 'inprogress', 'done']);
+      allow update: if signedIn() && requesterExists() && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.programId == resource.data.programId
+        && (!("processId" in request.resource.data) ||
+            request.resource.data.processId == resource.data.processId ||
+            (request.resource.data.processId is string
+             && exists(/databases/$(database)/documents/processes/$(request.resource.data.processId))
+             && get(/databases/$(database)/documents/processes/$(request.resource.data.processId)).data.projectId == resource.data.projectId))
+        && (!("status" in request.resource.data) || request.resource.data.status in ['todo', 'inprogress', 'done']);
+      allow delete: if signedIn() && requesterExists() && canManageOperations() && sameOrg(resource.data.orgId);
+    }
+  }
+}
