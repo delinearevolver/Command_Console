@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" 
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" 
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" 
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI" 
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_1" 
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  
+  <bpmn:process id="PLDashboardProcess" name="P&amp;L Dashboard Process" isExecutable="true">
+    
+    <!-- Start Event -->
+    <bpmn:startEvent id="StartEvent_1" name="User Opens Dashboard">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    
+    <!-- Check Authentication -->
+    <bpmn:exclusiveGateway id="Gateway_Auth" name="User Authenticated?">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Authenticated</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NotAuthenticated</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    
+    <!-- Service Task: Fetch User Organization -->
+    <bpmn:serviceTask id="Task_FetchOrg" name="Fetch User Organization" camunda:type="external" camunda:topic="fetch-org">
+      <bpmn:incoming>Flow_Authenticated</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- Check if Has Organization -->
+    <bpmn:exclusiveGateway id="Gateway_HasOrg" name="Has Organization?">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_HasOrg</bpmn:outgoing>
+      <bpmn:outgoing>Flow_NoOrg</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    
+    <!-- Service Task: Query Transactions -->
+    <bpmn:serviceTask id="Task_QueryTrans" name="Query Transactions from Firestore" camunda:type="external" camunda:topic="query-transactions">
+      <bpmn:incoming>Flow_HasOrg</bpmn:incoming>
+      <bpmn:incoming>Flow_Refresh</bpmn:incoming>
+      <bpmn:incoming>Flow_TransSaved</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- Script Task: Process Data -->
+    <bpmn:scriptTask id="Task_ProcessData" name="Process Transaction Data" scriptFormat="javascript">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+      <bpmn:script>
+        var income = [];
+        var expenses = [];
+        var totalIncome = 0;
+        var totalExpenses = 0;
+        
+        for (var i = 0; i &lt; transactions.length; i++) {
+          var trans = transactions[i];
+          if (trans.type === 'income') {
+            income.push(trans);
+            totalIncome += trans.amount;
+          } else if (trans.type === 'expense') {
+            expenses.push(trans);
+            totalExpenses += trans.amount;
+          }
+        }
+        
+        execution.setVariable('income', income);
+        execution.setVariable('expenses', expenses);
+        execution.setVariable('totalIncome', totalIncome);
+        execution.setVariable('totalExpenses', totalExpenses);
+      </bpmn:script>
+    </bpmn:scriptTask>
+    
+    <!-- Script Task: Calculate Profit -->
+    <bpmn:scriptTask id="Task_CalcProfit" name="Calculate Net Profit and Margin" scriptFormat="javascript">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+      <bpmn:script>
+        var totalIncome = execution.getVariable('totalIncome');
+        var totalExpenses = execution.getVariable('totalExpenses');
+        var netProfit = totalIncome - totalExpenses;
+        var profitMargin = totalIncome > 0 ? (netProfit / totalIncome * 100) : 0;
+        
+        execution.setVariable('netProfit', netProfit);
+        execution.setVariable('profitMargin', profitMargin);
+      </bpmn:script>
+    </bpmn:scriptTask>
+    
+    <!-- Service Task: Display Mock Data -->
+    <bpmn:serviceTask id="Task_ShowMock" name="Display Mock P&amp;L Data" camunda:type="external" camunda:topic="show-mock">
+      <bpmn:incoming>Flow_NoOrg</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- Service Task: Update Dashboard -->
+    <bpmn:serviceTask id="Task_UpdateUI" name="Update Dashboard UI" camunda:type="external" camunda:topic="update-ui">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- Timer Event -->
+    <bpmn:intermediateCatchEvent id="Event_Timer" name="5 Minute Refresh">
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+      <bpmn:outgoing>Flow_Refresh</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT5M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    
+    <!-- User Task: Add Transaction -->
+    <bpmn:userTask id="Task_AddTrans" name="Add Transaction Form" camunda:formKey="add-transaction">
+      <bpmn:extensionElements>
+        <camunda:formData>
+          <camunda:formField id="type" label="Type" type="enum">
+            <camunda:value id="income" name="Income" />
+            <camunda:value id="expense" name="Expense" />
+          </camunda:formField>
+          <camunda:formField id="amount" label="Amount" type="long" />
+          <camunda:formField id="description" label="Description" type="string" />
+        </camunda:formData>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_UserAdd</bpmn:incoming>
+      <bpmn:outgoing>Flow_8</bpmn:outgoing>
+    </bpmn:userTask>
+    
+    <!-- Service Task: Save Transaction -->
+    <bpmn:serviceTask id="Task_SaveTrans" name="Save to Firestore" camunda:type="external" camunda:topic="save-transaction">
+      <bpmn:incoming>Flow_8</bpmn:incoming>
+      <bpmn:outgoing>Flow_TransSaved</bpmn:outgoing>
+    </bpmn:serviceTask>
+    
+    <!-- End Events -->
+    <bpmn:endEvent id="EndEvent_NoAuth" name="Show Login">
+      <bpmn:incoming>Flow_NotAuthenticated</bpmn:incoming>
+    </bpmn:endEvent>
+    
+    <bpmn:endEvent id="EndEvent_Logout" name="User Logged Out">
+      <bpmn:incoming>Flow_UserLogout</bpmn:incoming>
+    </bpmn:endEvent>
+    
+    <!-- Sequence Flows -->
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Gateway_Auth" />
+    <bpmn:sequenceFlow id="Flow_Authenticated" name="Yes" sourceRef="Gateway_Auth" targetRef="Task_FetchOrg">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${authenticated == true}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotAuthenticated" name="No" sourceRef="Gateway_Auth" targetRef="EndEvent_NoAuth">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${authenticated == false}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_FetchOrg" targetRef="Gateway_HasOrg" />
+    <bpmn:sequenceFlow id="Flow_HasOrg" name="Yes" sourceRef="Gateway_HasOrg" targetRef="Task_QueryTrans">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${orgId != null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NoOrg" name="No" sourceRef="Gateway_HasOrg" targetRef="Task_ShowMock">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${orgId == null}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_QueryTrans" targetRef="Task_ProcessData" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Task_ProcessData" targetRef="Task_CalcProfit" />
+    <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_CalcProfit" targetRef="Task_UpdateUI" />
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_ShowMock" targetRef="Task_UpdateUI" />
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Task_UpdateUI" targetRef="Event_Timer" />
+    <bpmn:sequenceFlow id="Flow_Refresh" sourceRef="Event_Timer" targetRef="Task_QueryTrans" />
+    <bpmn:sequenceFlow id="Flow_8" sourceRef="Task_AddTrans" targetRef="Task_SaveTrans" />
+    <bpmn:sequenceFlow id="Flow_TransSaved" sourceRef="Task_SaveTrans" targetRef="Task_QueryTrans" />
+    
+    <!-- Boundary Events for User Actions -->
+    <bpmn:boundaryEvent id="Boundary_UserAdd" attachedToRef="Task_UpdateUI">
+      <bpmn:outgoing>Flow_UserAdd</bpmn:outgoing>
+      <bpmn:messageEventDefinition messageRef="Message_AddTransaction" />
+    </bpmn:boundaryEvent>
+    
+    <bpmn:boundaryEvent id="Boundary_UserLogout" attachedToRef="Task_UpdateUI">
+      <bpmn:outgoing>Flow_UserLogout</bpmn:outgoing>
+      <bpmn:messageEventDefinition messageRef="Message_Logout" />
+    </bpmn:boundaryEvent>
+    
+    <bpmn:sequenceFlow id="Flow_UserAdd" sourceRef="Boundary_UserAdd" targetRef="Task_AddTrans" />
+    <bpmn:sequenceFlow id="Flow_UserLogout" sourceRef="Boundary_UserLogout" targetRef="EndEvent_Logout" />
+    
+  </bpmn:process>
+  
+  <!-- Message Definitions -->
+  <bpmn:message id="Message_AddTransaction" name="AddTransactionMessage" />
+  <bpmn:message id="Message_Logout" name="LogoutMessage" />
+  
+  <!-- Diagram -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="PLDashboardProcess">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="152" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Auth_di" bpmnElement="Gateway_Auth" isMarkerVisible="true">
+        <dc:Bounds x="245" y="95" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_FetchOrg_di" bpmnElement="Task_FetchOrg">
+        <dc:Bounds x="370" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_HasOrg_di" bpmnElement="Gateway_HasOrg" isMarkerVisible="true">
+        <dc:Bounds x="525" y="95" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_QueryTrans_di" bpmnElement="Task_QueryTrans">
+        <dc:Bounds x="650" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ProcessData_di" bpmnElement="Task_ProcessData">
+        <dc:Bounds x="820" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CalcProfit_di" bpmnElement="Task_CalcProfit">
+        <dc:Bounds x="990" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ShowMock_di" bpmnElement="Task_ShowMock">
+        <dc:Bounds x="500" y="200" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_UpdateUI_di" bpmnElement="Task_UpdateUI">
+        <dc:Bounds x="1160" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Timer_di" bpmnElement="Event_Timer">
+        <dc:Bounds x="1192" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AddTrans_di" bpmnElement="Task_AddTrans">
+        <dc:Bounds x="820" y="310" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SaveTrans_di" bpmnElement="Task_SaveTrans">
+        <dc:Bounds x="650" y="310" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_NoAuth_di" bpmnElement="EndEvent_NoAuth">
+        <dc:Bounds x="252" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_Logout_di" bpmnElement="EndEvent_Logout">
+        <dc:Bounds x="1352" y="232" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="188" y="120" />
+        <di:waypoint x="245" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Authenticated_di" bpmnElement="Flow_Authenticated">
+        <di:waypoint x="295" y="120" />
+        <di:waypoint x="370" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotAuthenticated_di" bpmnElement="Flow_NotAuthenticated">
+        <di:waypoint x="270" y="145" />
+        <di:waypoint x="270" y="232" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="470" y="120" />
+        <di:waypoint x="525" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_HasOrg_di" bpmnElement="Flow_HasOrg">
+        <di:waypoint x="575" y="120" />
+        <di:waypoint x="650" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NoOrg_di" bpmnElement="Flow_NoOrg">
+        <di:waypoint x="550" y="145" />
+        <di:waypoint x="550" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="750" y="120" />
+        <di:waypoint x="820" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="920" y="120" />
+        <di:waypoint x="990" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_5_di" bpmnElement="Flow_5">
+        <di:waypoint x="1090" y="120" />
+        <di:waypoint x="1160" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_6_di" bpmnElement="Flow_6">
+        <di:waypoint x="600" y="240" />
+        <di:waypoint x="1210" y="240" />
+        <di:waypoint x="1210" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_7_di" bpmnElement="Flow_7">
+        <di:waypoint x="1210" y="160" />
+        <di:waypoint x="1210" y="232" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Refresh_di" bpmnElement="Flow_Refresh">
+        <di:waypoint x="1192" y="250" />
+        <di:waypoint x="700" y="250" />
+        <di:waypoint x="700" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_8_di" bpmnElement="Flow_8">
+        <di:waypoint x="820" y="350" />
+        <di:waypoint x="750" y="350" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_TransSaved_di" bpmnElement="Flow_TransSaved">
+        <di:waypoint x="700" y="310" />
+        <di:waypoint x="700" y="160" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

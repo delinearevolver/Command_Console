@@ -1,0 +1,1 @@
+import { create } from 'xmlbuilder2'; export function jsonToUBL(inv:any){ return create({version:'1.0'}).ele('Invoice').ele('ID').txt(inv.invoiceId).up().end({prettyPrint:true}); }

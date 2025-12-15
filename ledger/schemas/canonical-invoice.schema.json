@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CMQUO Canonical Invoice",
+  "type": "object",
+  "required": [
+    "invoiceId",
+    "issueDate",
+    "currency",
+    "buyer",
+    "seller",
+    "lines",
+    "totals"
+  ],
+  "properties": {
+    "invoiceId": {
+      "type": "string"
+    },
+    "issueDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "dueDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "buyer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "address": {
+          "type": "object",
+          "properties": {
+            "line1": {
+              "type": "string"
+            },
+            "city": {
+              "type": "string"
+            },
+            "postcode": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "seller": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "address": {
+          "type": "object",
+          "properties": {
+            "line1": {
+              "type": "string"
+            },
+            "city": {
+              "type": "string"
+            },
+            "postcode": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "lineNo": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "qty": {
+            "type": "number"
+          },
+          "unitPrice": {
+            "type": "number"
+          },
+          "taxRate": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "net": {
+          "type": "number"
+        },
+        "tax": {
+          "type": "number"
+        },
+        "gross": {
+          "type": "number"
+        },
+        "paid": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}
