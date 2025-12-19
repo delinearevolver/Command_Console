@@ -1,0 +1,28 @@
+Python / virtualenv
+pycache/
+*.py[co]
+.venv/
+env/
+
+Node
+node_modules/
+dist/
+build/
+npm-debug.log*
+
+Firebase / env
+env
+.env.*
+
+Ledger artifacts
+ledger.db
+reports/*.csv
+
+OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+
+__pycache__/
+
+.tmp.driveupload/

@@ -57,6 +57,19 @@ const PayrollConsole = () => {
         }));
     }, [user?.orgId, user?.uid, user?.email, user?.name, meEmployee]);
 
+const syncBadge = (syncStatus) => {
+    const tone = {
+        synced: 'bg-green-900 text-green-200',
+        error: 'bg-red-900 text-red-200',
+        blocked: 'bg-amber-900 text-amber-200',
+        }[String(syncStatus || '').toLowerCase()] || 'bg-gray-800 text-gray-200';
+        return (
+            <span className={`text-[10px] px-2 py-1 rounded ${tone} uppercase`}>
+                {syncStatus || 'unsynced'}
+            </span>
+        );
+    };
+
     const filtered = useMemo(() => {
         const term = search.toLowerCase();
         return claims.filter((claim) => {
@@ -247,17 +260,21 @@ const PayrollConsole = () => {
                                     className={`cursor-pointer hover:border-red-500 ${selectedClaimId === claim.id ? 'border-red-500' : 'border-red-900'}`}
                                     onClick={() => selectClaim(claim)}
                                 >
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex justify-between items-start gap-2">
                                         <div>
                                             <p className="text-xs text-gray-500">{claim.id}</p>
                                             <p className="text-sm font-semibold text-red-200">{claim.claimantName || claim.claimantEmail || 'Claim'}</p>
                                             <p className="text-xs text-gray-400">{claim.period || 'Period not set'}</p>
                                         </div>
-                                        <span className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-200 capitalize">{claim.status || 'draft'}</span>
+                                        <div className="text-right space-y-1">
+                                            <span className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-200 capitalize">{claim.status || 'draft'}</span>
+                                            <div>{syncBadge(claim.syncStatus)}</div>
+                                        </div>
                                     </div>
                                     <p className="text-sm text-gray-300 mt-1">
                                         {claim.currency || 'GBP'} {claim.totals?.grossTotal?.toFixed ? claim.totals.grossTotal.toFixed(2) : (claim.totals?.grossTotal || 0)}
                                     </p>
+                                    {claim.syncMessage && <p className="text-[11px] text-gray-500 mt-1 truncate">{claim.syncMessage}</p>}
                                 </Card>
                             ))}
                         </div>
@@ -268,6 +285,10 @@ const PayrollConsole = () => {
                             <div>
                                 <h3 className="text-xl font-bold text-red-300">Claim Detail</h3>
                                 <p className="text-gray-500 text-sm">Draft, submit, and approve expenses with receipt extraction stubs.</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                    {syncBadge(draft.syncStatus)}
+                                    {draft.syncMessage && <span className="text-[11px] text-gray-400">{draft.syncMessage}</span>}
+                                </div>
                             </div>
                             <div className="flex gap-2">
                                 <Button className="w-auto px-4 py-1" onClick={() => statusAction('draft')} disabled={saving}>Save Draft</Button>

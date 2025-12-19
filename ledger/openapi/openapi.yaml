@@ -1,0 +1,3 @@
+openapi: 3.0.3
+info: { title: CMQUO Invoicing Core, version: 0.2.0 }
+paths: {}

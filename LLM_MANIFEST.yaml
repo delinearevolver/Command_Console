@@ -1,19 +1,88 @@
 ﻿project: command-console
+description: Business management platform with integrated multi-capital ledger
+
+# ─────────────────────────────────────────────────────────────────────
+# FILE BOUNDARIES
+# ─────────────────────────────────────────────────────────────────────
 immutable_paths:
   - .firebaserc
   - functions/**
   - src/core/**
   - src/state/**
+  - ledger/db/**          # Schema definitions - don't modify without review
+
 editable_paths:
   - firebase.json
   - public/**
   - src/components/**
-  - src/modules**
+  - src/modules/**
   - src/pages/**
+  - ledger/services/**    # API layer is editable
+
 protected_regions:
   start: "// <keep>"
   end: "// </keep>"
+
 contracts:
   firebase: "Hosting serves built assets from /dist; SPA rewrite to /index.html"
   router:   "If using React Router, route IDs are stable under src/core/**"
   state:    "Public selectors are API under src/state/**"
+
+# ─────────────────────────────────────────────────────────────────────
+# DATA ARCHITECTURE
+# ─────────────────────────────────────────────────────────────────────
+data_stores:
+  firestore:
+    purpose: Operational data (real-time UI state)
+    collections:
+      - catalogueItems
+      - customers
+      - invoices        # Drafts and sent invoices
+      - priceBooks
+      - tasks
+      - projects
+    rules: "NEVER create ledger, accounts, journals, or postings here"
+
+  postgresql:
+    purpose: Accounting ledger (source of financial truth)
+    instance: cmquo-ledger-dev
+    connection: fearless-leader:europe-west2:cmquo-ledger-dev
+    tables:
+      - accounts        # Chart of accounts
+      - journals        # Transaction headers
+      - postings        # Debit/credit entries
+      - invoices        # Final invoiced amounts
+    schema_file: ledger/db/init_ledger.sql
+    rules: "ALL double-entry accounting belongs here. Never in Firestore."
+
+# ─────────────────────────────────────────────────────────────────────
+# DATA FLOW
+# ─────────────────────────────────────────────────────────────────────
+data_flow:
+  invoice_lifecycle:
+    - step: Draft created in Firestore (invoices collection)
+    - step: User finalizes invoice
+    - step: syncinvoicetoledger Cloud Run service triggered
+    - step: Journal entry created in PostgreSQL (journals + postings)
+    - step: Invoice record created in PostgreSQL (invoices)
+  
+  principle: "Firestore = source documents. PostgreSQL = books of record."
+
+# ─────────────────────────────────────────────────────────────────────
+# GUARDRAILS
+# ─────────────────────────────────────────────────────────────────────
+guardrails:
+  - "NEVER create accounting tables in Firestore"
+  - "NEVER create collections named: ledger, accounts, journals, postings, transactions"
+  - "NEVER modify PostgreSQL schema without explicit user approval"
+  - "Ledger work requires confirmation: 'This affects the accounting system. Proceed?'"
+
+# ─────────────────────────────────────────────────────────────────────
+# ROADMAP
+# ─────────────────────────────────────────────────────────────────────
+roadmap:
+  ledger_expansion:
+    - financial: "Live - GBP, standard GAAP accounts"
+    - time: "Planned - hours/effort as capital"
+    - ecological: "Planned - carbon, biodiversity, water, soil"
+  note: "Schema will expand. Same PostgreSQL instance, new tables."

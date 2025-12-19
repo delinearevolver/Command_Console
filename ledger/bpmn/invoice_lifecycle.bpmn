@@ -1,0 +1,3 @@
+<?xml version="1.0"?><definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" targetNamespace="x">
+  <process id="invoice_lifecycle" isExecutable="true"><startEvent id="s"/><endEvent id="e"/>
+    <sequenceFlow id="f1" sourceRef="s" targetRef="e"/></process></definitions>
