@@ -208,6 +208,17 @@ const getISOWeek = (dateString) => {
     return `${date.getFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
 };
 
+const defaultAccountingFilters = () => ({
+    startDate: '',
+    endDate: '',
+    account: 'all',
+    type: 'all',
+    customerId: 'all',
+    currency: 'all',
+    search: '',
+    document: 'all',
+});
+
 const BillingConsole = () => {
     const { user } = useAuth();
     const { customers = [], priceBooks = [], invoices = [], invoiceTemplates = [], catalogueItems = [], loading } = useData();
@@ -241,6 +252,7 @@ const BillingConsole = () => {
     const [customerMessage, setCustomerMessage] = useState(null);
     const [invoiceMessage, setInvoiceMessage] = useState(null);
     const [templateMessage, setTemplateMessage] = useState(null);
+    const [accountingFilters, setAccountingFilters] = useState(() => defaultAccountingFilters());
     const lastCustomerRef = useRef('');
 
 const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId) || null, [customers, selectedCustomerId]);
@@ -291,6 +303,12 @@ const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCust
             return Array.isArray(fromSku.options) ? fromSku.options : [];
         }
         return [];
+    };
+    const updateAccountingFilter = (key, value) => {
+        setAccountingFilters(prev => ({ ...prev, [key]: value }));
+    };
+    const resetAccountingFilters = () => {
+        setAccountingFilters(defaultAccountingFilters());
     };
 
     const addCatalogueRow = () => {
@@ -927,7 +945,8 @@ const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCust
     const viewTabs = [
         { id: 'invoices', label: 'Current Invoice & Credit' },
         { id: 'priceLists', label: 'Customer Price Lists' },
-        { id: 'history', label: 'Historic Invoices & Accounts' },
+        { id: 'history', label: 'Historic Invoices & Payments' },
+        { id: 'accounts', label: 'Accounts (GAAP Ledger)' },
     ];
     const customerNameById = useMemo(() => {
         const map = new Map();
@@ -1024,6 +1043,260 @@ const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCust
         });
         return entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }, [invoices, customerNameById]);
+    const accountingLedger = useMemo(() => {
+        const entries = [];
+        (invoices || []).forEach(invoice => {
+            if (!invoice) return;
+            const isCredit = (invoice.documentType || '').toLowerCase() === 'creditnote';
+            const direction = isCredit ? -1 : 1;
+            const currency = invoice.currency || 'GBP';
+            const issueDate = invoice.issueDate || (invoice.createdAt?.seconds ? new Date(invoice.createdAt.seconds * 1000).toISOString().slice(0, 10) : '');
+            const reference = invoice.reference || invoice.id;
+            const customerId = invoice.customerId || '';
+            const counterparty = customerNameById.get(customerId) || (customerId ? 'Customer' : 'Unassigned');
+            const lines = Array.isArray(invoice.lines) ? invoice.lines : [];
+            let netAccumulator = 0;
+            let taxAccumulator = 0;
+            if (lines.length) {
+                lines.forEach((line, idx) => {
+                    const net = asNumber(line.quantity, 0) * asNumber(line.unitPrice, 0) * direction;
+                    const tax = net * (asNumber(line.taxRate, 0) / 100);
+                    netAccumulator += net;
+                    taxAccumulator += tax;
+                    const memo = `${line.sku ? `${line.sku} - ` : ''}${line.description || 'Line item'}`.trim();
+                    entries.push({
+                        id: `inv-${invoice.id || randomId()}-rev-${idx}`,
+                        date: line.lineDate || issueDate,
+                        accountCode: '4000',
+                        accountName: 'Sales Revenue',
+                        type: 'revenue',
+                        debit: net < 0 ? Math.abs(net) : 0,
+                        credit: net > 0 ? net : 0,
+                        memo,
+                        documentRef: reference,
+                        documentType: invoice.documentType || 'Invoice',
+                        counterparty,
+                        customerId,
+                        currency,
+                        source: 'Invoice',
+                        status: invoice.status || 'Draft',
+                    });
+                });
+            } else {
+                const net = Number(invoice.totals?.net || 0) * direction;
+                netAccumulator = net;
+                if (net) {
+                    entries.push({
+                        id: `inv-${invoice.id || randomId()}-rev`,
+                        date: issueDate,
+                        accountCode: '4000',
+                        accountName: 'Sales Revenue',
+                        type: 'revenue',
+                        debit: net < 0 ? Math.abs(net) : 0,
+                        credit: net > 0 ? net : 0,
+                        memo: `Invoice ${reference}`,
+                        documentRef: reference,
+                        documentType: invoice.documentType || 'Invoice',
+                        counterparty,
+                        customerId,
+                        currency,
+                        source: 'Invoice',
+                        status: invoice.status || 'Draft',
+                    });
+                }
+                taxAccumulator = Number(invoice.totals?.tax || 0) * direction;
+            }
+            const effectiveTax = lines.length ? taxAccumulator : Number(invoice.totals?.tax || 0) * direction;
+            if (effectiveTax) {
+                entries.push({
+                    id: `inv-${invoice.id || randomId()}-tax`,
+                    date: issueDate,
+                    accountCode: '2100',
+                    accountName: 'Sales Tax Payable',
+                    type: 'liability',
+                    debit: effectiveTax < 0 ? Math.abs(effectiveTax) : 0,
+                    credit: effectiveTax > 0 ? effectiveTax : 0,
+                    memo: `Tax on ${reference}`,
+                    documentRef: reference,
+                    documentType: invoice.documentType || 'Invoice',
+                    counterparty,
+                    customerId,
+                    currency,
+                    source: 'Invoice',
+                    status: invoice.status || 'Draft',
+                });
+            }
+            const grossFromTotals = Number(invoice.totals?.gross || 0) * direction;
+            const effectiveGross = lines.length ? netAccumulator + effectiveTax : grossFromTotals;
+            if (effectiveGross) {
+                entries.push({
+                    id: `inv-${invoice.id || randomId()}-ar`,
+                    date: issueDate,
+                    accountCode: '1100',
+                    accountName: 'Accounts Receivable',
+                    type: 'asset',
+                    debit: effectiveGross > 0 ? Math.abs(effectiveGross) : 0,
+                    credit: effectiveGross < 0 ? Math.abs(effectiveGross) : 0,
+                    memo: `${isCredit ? 'Credit note' : 'Invoice'} ${reference}`,
+                    documentRef: reference,
+                    documentType: invoice.documentType || 'Invoice',
+                    counterparty,
+                    customerId,
+                    currency,
+                    source: 'Invoice',
+                    status: invoice.status || 'Draft',
+                });
+            }
+            const payments = Array.isArray(invoice.payments) ? invoice.payments : [];
+            payments.forEach((payment, idx) => {
+                const rawAmount = Number(payment?.amount || 0) * direction;
+                if (!rawAmount) return;
+                const paymentDate = payment?.date || issueDate;
+                const note = payment?.note || payment?.reference || '';
+                const method = payment?.method || payment?.type || 'Payment';
+                const memo = `${method}${note ? ' - ' + note : ''}`;
+                entries.push({
+                    id: `pay-${invoice.id || randomId()}-${idx}-cash`,
+                    date: paymentDate,
+                    accountCode: '1000',
+                    accountName: 'Cash & Bank',
+                    type: 'asset',
+                    debit: rawAmount > 0 ? rawAmount : 0,
+                    credit: rawAmount < 0 ? Math.abs(rawAmount) : 0,
+                    memo,
+                    documentRef: reference,
+                    documentType: 'Payment',
+                    counterparty,
+                    customerId,
+                    currency,
+                    source: 'Payment receipt',
+                    status: invoice.status || 'Draft',
+                });
+                entries.push({
+                    id: `pay-${invoice.id || randomId()}-${idx}-ar`,
+                    date: paymentDate,
+                    accountCode: '1100',
+                    accountName: 'Accounts Receivable',
+                    type: 'asset',
+                    debit: rawAmount < 0 ? Math.abs(rawAmount) : 0,
+                    credit: rawAmount > 0 ? rawAmount : 0,
+                    memo: `Settlement for ${reference}`,
+                    documentRef: reference,
+                    documentType: 'Payment',
+                    counterparty,
+                    customerId,
+                    currency,
+                    source: 'Payment receipt',
+                    status: invoice.status || 'Draft',
+                });
+            });
+        });
+        return entries.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.documentRef || '').localeCompare(a.documentRef || ''));
+    }, [invoices, customerNameById]);
+    const normalizeAccountAmount = (entry) => {
+        const debit = Number(entry.debit || 0);
+        const credit = Number(entry.credit || 0);
+        const diff = debit - credit;
+        if (entry.type === 'asset' || entry.type === 'expense') return diff;
+        return -diff;
+    };
+    const accountingAccountOptions = useMemo(() => {
+        const map = new Map();
+        accountingLedger.forEach(entry => {
+            if (!entry?.accountCode) return;
+            map.set(entry.accountCode, entry.accountName || entry.accountCode);
+        });
+        return Array.from(map.entries()).map(([code, name]) => ({ code, name })).sort((a, b) => a.code.localeCompare(b.code));
+    }, [accountingLedger]);
+    const accountingCurrencies = useMemo(() => Array.from(new Set(accountingLedger.map(entry => entry.currency || 'GBP'))), [accountingLedger]);
+    const filteredLedger = useMemo(() => {
+        const search = (accountingFilters.search || '').trim().toLowerCase();
+        return accountingLedger.filter(entry => {
+            if (accountingFilters.account !== 'all' && entry.accountCode !== accountingFilters.account) return false;
+            if (accountingFilters.type !== 'all' && entry.type !== accountingFilters.type) return false;
+            if (accountingFilters.customerId !== 'all' && entry.customerId !== accountingFilters.customerId) return false;
+            if (accountingFilters.currency !== 'all' && entry.currency !== accountingFilters.currency) return false;
+            if (accountingFilters.startDate && entry.date && entry.date < accountingFilters.startDate) return false;
+            if (accountingFilters.endDate && entry.date && entry.date > accountingFilters.endDate) return false;
+            if (accountingFilters.document !== 'all') {
+                const docType = (entry.documentType || '').toLowerCase();
+                if (accountingFilters.document === 'invoice' && docType === 'payment') return false;
+                if (accountingFilters.document === 'payment' && docType !== 'payment') return false;
+                if (accountingFilters.document === 'credit' && docType !== 'creditnote') return false;
+            }
+            if (search) {
+                const haystack = `${entry.memo || ''} ${entry.accountName || ''} ${entry.documentRef || ''} ${entry.documentType || ''} ${entry.counterparty || ''}`.toLowerCase();
+                if (!haystack.includes(search)) return false;
+            }
+            return true;
+        });
+    }, [accountingLedger, accountingFilters]);
+    const ledgerTotals = useMemo(() => {
+        const debit = filteredLedger.reduce((sum, entry) => sum + Number(entry.debit || 0), 0);
+        const credit = filteredLedger.reduce((sum, entry) => sum + Number(entry.credit || 0), 0);
+        return {
+            debit: Number(debit.toFixed(2)),
+            credit: Number(credit.toFixed(2)),
+            imbalance: Number((debit - credit).toFixed(2)),
+        };
+    }, [filteredLedger]);
+    const accountBalances = useMemo(() => {
+        const balances = new Map();
+        filteredLedger.forEach(entry => {
+            const key = entry.accountCode || entry.accountName || entry.accountId || 'uncategorized';
+            const current = balances.get(key) || {
+                accountCode: entry.accountCode || key,
+                accountName: entry.accountName || key,
+                type: entry.type || 'asset',
+                balance: 0,
+                currency: entry.currency || 'GBP',
+            };
+            current.balance += normalizeAccountAmount(entry);
+            current.currency = entry.currency || current.currency;
+            balances.set(key, current);
+        });
+        return Array.from(balances.values()).sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+    }, [filteredLedger]);
+    const profitAndLoss = useMemo(() => {
+        let revenue = 0;
+        let expenses = 0;
+        filteredLedger.forEach(entry => {
+            if (entry.type === 'revenue') {
+                revenue += normalizeAccountAmount(entry);
+            }
+            if (entry.type === 'expense') {
+                expenses += normalizeAccountAmount(entry);
+            }
+        });
+        return {
+            revenue: Number(revenue.toFixed(2)),
+            expenses: Number(expenses.toFixed(2)),
+            net: Number((revenue - expenses).toFixed(2)),
+        };
+    }, [filteredLedger]);
+    const balanceSheet = useMemo(() => {
+        let assets = 0;
+        let liabilities = 0;
+        let equity = 0;
+        filteredLedger.forEach(entry => {
+            const amount = normalizeAccountAmount(entry);
+            if (entry.type === 'asset') assets += amount;
+            if (entry.type === 'liability') liabilities += amount;
+            if (entry.type === 'equity') equity += amount;
+        });
+        const equityWithIncome = equity + profitAndLoss.net;
+        const balanceGap = Number((assets - liabilities - equityWithIncome).toFixed(2));
+        return {
+            assets: Number(assets.toFixed(2)),
+            liabilities: Number(liabilities.toFixed(2)),
+            equity: Number(equityWithIncome.toFixed(2)),
+            balanceGap,
+        };
+    }, [filteredLedger, profitAndLoss]);
+    const reportingCurrency = accountingFilters.currency !== 'all'
+        ? accountingFilters.currency
+        : (accountingCurrencies[0] || 'GBP');
+    const multiCurrency = accountingFilters.currency === 'all' && accountingCurrencies.length > 1;
 
     useEffect(() => {
         const signature = formatCatalogueSignature(catalogueItems);
@@ -1570,6 +1843,172 @@ const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCust
                 </div>
             )}
 
+            {activeView === 'accounts' && (
+                <div className="space-y-6">
+                    <Card className="space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <div>
+                                <h3 className="text-lg text-red-400">General ledger</h3>
+                                <p className="text-sm text-gray-400">GAAP-style debit and credit lines for every invoice, credit note, and payment.</p>
+                                {multiCurrency && (
+                                    <p className="text-xs text-yellow-300">Totals mix currencies — set a currency filter to review in a single currency.</p>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="button" className="w-auto bg-gray-800" onClick={resetAccountingFilters}>Reset filters</Button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <Input type="date" value={accountingFilters.startDate} onChange={event => updateAccountingFilter('startDate', event.target.value)} placeholder="Start date" />
+                            <Input type="date" value={accountingFilters.endDate} onChange={event => updateAccountingFilter('endDate', event.target.value)} placeholder="End date" />
+                            <Select value={accountingFilters.account} onChange={event => updateAccountingFilter('account', event.target.value)}>
+                                <option value="all">All accounts</option>
+                                {accountingAccountOptions.map(option => (
+                                    <option key={option.code} value={option.code}>{`${option.code} - ${option.name}`}</option>
+                                ))}
+                            </Select>
+                            <Select value={accountingFilters.type} onChange={event => updateAccountingFilter('type', event.target.value)}>
+                                <option value="all">All account types</option>
+                                <option value="asset">Assets</option>
+                                <option value="liability">Liabilities</option>
+                                <option value="equity">Equity</option>
+                                <option value="revenue">Revenue</option>
+                                <option value="expense">Expenses</option>
+                            </Select>
+                            <Select value={accountingFilters.document} onChange={event => updateAccountingFilter('document', event.target.value)}>
+                                <option value="all">All sources</option>
+                                <option value="invoice">Invoices & credits</option>
+                                <option value="credit">Credit notes only</option>
+                                <option value="payment">Payments only</option>
+                            </Select>
+                            <Select value={accountingFilters.currency} onChange={event => updateAccountingFilter('currency', event.target.value)}>
+                                <option value="all">All currencies</option>
+                                {accountingCurrencies.map(code => (
+                                    <option key={code} value={code}>{code}</option>
+                                ))}
+                            </Select>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                            <Select value={accountingFilters.customerId} onChange={event => updateAccountingFilter('customerId', event.target.value)}>
+                                <option value="all">All customers</option>
+                                {customers.map(customer => (
+                                    <option key={customer.id} value={customer.id}>{customer.name}</option>
+                                ))}
+                            </Select>
+                            <Input className="md:col-span-2 lg:col-span-3" value={accountingFilters.search} onChange={event => updateAccountingFilter('search', event.target.value)} placeholder="Search memo, reference, or counterparty" />
+                            <div className="md:col-span-3 lg:col-span-2 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-gray-300">
+                                <div className="border border-red-900 bg-gray-900/60 p-2 rounded">
+                                    <p className="text-[10px] uppercase tracking-wide text-gray-400">Entries</p>
+                                    <p className="text-lg font-semibold text-red-200">{filteredLedger.length}</p>
+                                </div>
+                                <div className="border border-red-900 bg-gray-900/60 p-2 rounded">
+                                    <p className="text-[10px] uppercase tracking-wide text-gray-400">Debits</p>
+                                    <p className="text-lg font-semibold text-red-200">{formatCurrency(ledgerTotals.debit, reportingCurrency)}</p>
+                                </div>
+                                <div className="border border-red-900 bg-gray-900/60 p-2 rounded">
+                                    <p className="text-[10px] uppercase tracking-wide text-gray-400">Credits</p>
+                                    <p className="text-lg font-semibold text-red-200">{formatCurrency(ledgerTotals.credit, reportingCurrency)}</p>
+                                </div>
+                                <div className={'border border-red-900 bg-gray-900/60 p-2 rounded ' + (ledgerTotals.imbalance === 0 ? '' : 'text-yellow-200')}>
+                                    <p className="text-[10px] uppercase tracking-wide text-gray-400">Balance check</p>
+                                    <p className="text-lg font-semibold">{formatCurrency(ledgerTotals.imbalance, reportingCurrency)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+
+                    <Card className="space-y-3">
+                        <div className="hidden md:grid md:grid-cols-9 gap-3 px-3 text-[10px] uppercase tracking-wide text-red-300">
+                            <span>Date</span>
+                            <span>Account</span>
+                            <span>Type</span>
+                            <span className="text-right">Debit</span>
+                            <span className="text-right">Credit</span>
+                            <span>Currency</span>
+                            <span>Counterparty</span>
+                            <span>Source</span>
+                            <span>Memo</span>
+                        </div>
+                        {filteredLedger.length === 0 && (
+                            <p className="text-sm text-gray-500">No ledger entries match the current filters.</p>
+                        )}
+                        {filteredLedger.map(entry => (
+                            <div key={entry.id} className="grid grid-cols-1 md:grid-cols-9 gap-3 border border-red-900 bg-gray-900/60 p-3">
+                                <div>
+                                    <p className="font-semibold">{entry.date || '-'}</p>
+                                    <p className="text-xs text-gray-400">{entry.documentRef || ''}</p>
+                                </div>
+                                <div className="text-sm text-gray-300">{`${entry.accountCode || ''} ${entry.accountName || ''}`.trim()}</div>
+                                <div className="text-sm text-gray-300 capitalize">{entry.type || '-'}</div>
+                                <div className="md:text-right text-sm text-gray-300">{formatCurrency(entry.debit || 0, entry.currency || reportingCurrency)}</div>
+                                <div className="md:text-right text-sm text-gray-300">{formatCurrency(entry.credit || 0, entry.currency || reportingCurrency)}</div>
+                                <div className="text-sm text-gray-300">{entry.currency || reportingCurrency}</div>
+                                <div className="text-sm text-gray-300">{entry.counterparty || 'Unassigned'}</div>
+                                <div className="text-sm text-gray-300">{entry.documentType || entry.source || 'Invoice'}</div>
+                                <div className="text-sm text-gray-300">{entry.memo || entry.source || '-'}</div>
+                            </div>
+                        ))}
+                    </Card>
+
+                    <Card className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <h4 className="text-lg text-red-400">Profit & Loss ({reportingCurrency})</h4>
+                                <div className="flex items-center justify-between text-sm text-gray-300">
+                                    <span>Revenue</span>
+                                    <span>{formatCurrency(profitAndLoss.revenue, reportingCurrency)}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm text-gray-300">
+                                    <span>Expenses</span>
+                                    <span>{formatCurrency(profitAndLoss.expenses, reportingCurrency)}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm font-semibold text-red-200">
+                                    <span>Net income</span>
+                                    <span>{formatCurrency(profitAndLoss.net, reportingCurrency)}</span>
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <h4 className="text-lg text-red-400">Balance sheet ({reportingCurrency})</h4>
+                                <div className="flex items-center justify-between text-sm text-gray-300">
+                                    <span>Assets</span>
+                                    <span>{formatCurrency(balanceSheet.assets, reportingCurrency)}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm text-gray-300">
+                                    <span>Liabilities</span>
+                                    <span>{formatCurrency(balanceSheet.liabilities, reportingCurrency)}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-sm text-gray-300">
+                                    <span>Equity (incl. P&L)</span>
+                                    <span>{formatCurrency(balanceSheet.equity, reportingCurrency)}</span>
+                                </div>
+                                <div className={'flex items-center justify-between text-sm ' + (Math.abs(balanceSheet.balanceGap) < 0.01 ? 'text-gray-400' : 'text-yellow-200')}>
+                                    <span>Balance check</span>
+                                    <span>{formatCurrency(balanceSheet.balanceGap, reportingCurrency)}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <h4 className="text-sm text-red-400">Account balances</h4>
+                            <div className="hidden md:grid md:grid-cols-4 gap-3 px-3 text-[10px] uppercase tracking-wide text-red-300">
+                                <span>Account</span>
+                                <span>Type</span>
+                                <span className="text-right">Balance</span>
+                                <span>Currency</span>
+                            </div>
+                            {accountBalances.length === 0 && <p className="text-sm text-gray-500">No balances to show.</p>}
+                            {accountBalances.map(balance => (
+                                <div key={balance.accountCode} className="grid grid-cols-1 md:grid-cols-4 gap-3 border border-red-900 bg-gray-900/60 p-3">
+                                    <div className="text-sm text-gray-300 font-semibold">{`${balance.accountCode} ${balance.accountName}`.trim()}</div>
+                                    <div className="text-sm text-gray-300 capitalize">{balance.type}</div>
+                                    <div className="md:text-right text-sm text-gray-300">{formatCurrency(balance.balance, balance.currency || reportingCurrency)}</div>
+                                    <div className="text-sm text-gray-300">{balance.currency || reportingCurrency}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </Card>
+                </div>
+            )}
+
         {activeView === 'history' && (
             <div className="space-y-6">
                 <Card className="space-y-4">
@@ -1660,4 +2099,3 @@ const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCust
 };
 
 export default BillingConsole;
-
