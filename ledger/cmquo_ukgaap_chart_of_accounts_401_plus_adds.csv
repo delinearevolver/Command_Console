@@ -1,0 +1,494 @@
+code,name,type
+1000,Cash & Bank (Header),Asset
+1001,Bank - Savings,Asset
+1002,Bank - Foreign Currency,Asset
+1003,Bank - Secondary / Revolut / Wise,Asset
+1010,Bank - Main,Asset
+1020,Card Clearing,Asset
+1030,Undeposited Funds,Asset
+1035,Payments in Transit / Bank Transfers Pending,Asset
+1040,Short-term Deposits / Cash Equivalents,Asset
+1050,Restricted Cash,Asset
+1100,Accounts Receivable (Trade Debtors),Asset
+1110,Bad Debt Provision,Asset
+1120,Accrued Income / Unbilled Revenue,Asset
+1130,Contract Assets,Asset
+1135,Retentions Receivable,Asset
+1140,Other Receivables,Asset
+1145,Staff Advances / Loans,Asset
+1150,Prepaid Expenses - Insurance,Asset
+1151,Prepaid Expenses - Rent,Asset
+1152,Prepaid Expenses - Subscriptions,Asset
+1200,VAT Receivable (Input VAT),Asset
+1205,VAT Recoverable - Imports (PVA),Asset
+1206,VAT Recoverable - Reverse Charge,Asset
+1210,VAT Deferred / Other VAT,Asset
+1300,Prepayments,Asset
+1400,Inventory / Stock,Asset
+1401,Inventory - Raw Materials,Asset
+1402,Inventory - Work In Progress,Asset
+1403,Inventory - Finished Goods,Asset
+1404,Inventory - Stock in Transit,Asset
+1409,Inventory - Obsolescence Provision,Asset
+1500,Fixed Assets - Cost,Asset
+1501,Plant & Machinery - Cost,Asset
+1502,IT Equipment - Cost,Asset
+1503,Vehicles - Cost,Asset
+1504,Fixtures & Fittings - Cost,Asset
+1505,Leasehold Improvements - Cost,Asset
+1506,Tools & Equipment - Cost,Asset
+1507,Office Equipment - Cost,Asset
+1510,Fixed Assets - Accumulated Depreciation,Asset
+1511,Plant & Machinery - Accumulated Depreciation,Asset
+1512,IT Equipment - Accumulated Depreciation,Asset
+1513,Vehicles - Accumulated Depreciation,Asset
+1514,Fixtures & Fittings - Accumulated Depreciation,Asset
+1515,Leasehold Improvements - Accumulated Depreciation,Asset
+1516,Tools & Equipment - Accumulated Depreciation,Asset
+1517,Office Equipment - Accumulated Depreciation,Asset
+1520,Intangible Assets - Cost,Asset
+1521,Software - Cost,Asset
+1522,Website / Platform Development - Cost,Asset
+1523,Patents / Trademarks - Cost,Asset
+1530,Intangibles - Accumulated Amortisation,Asset
+1531,Software - Accumulated Amortisation,Asset
+1532,Website / Platform - Accumulated Amortisation,Asset
+1533,Patents / Trademarks - Accumulated Amortisation,Asset
+1540,Asset Disposal / Additions Clearing,Asset
+1550,Capital Work In Progress,Asset
+1560,Right-of-Use Assets - Cost,Asset
+1561,Right-of-Use Assets - Accumulated Depreciation,Asset
+1570,Intangible Assets - Work In Progress,Asset
+1600,Deposits Paid,Asset
+1700,Intercompany Receivable,Asset
+1750,Deferred Tax Asset,Asset
+1800,Director’s Loan (Debit),Asset
+1900,Suspense / Clearing (Asset),Asset
+2000,Accounts Payable (Trade Creditors),Liability
+2010,Accrued Expenses,Liability
+2020,Deferred Income,Liability
+2030,Customer Deposits / Deferred Receipts,Liability
+2035,Refund Liability,Liability
+2040,GRNI / Accrued Purchases,Liability
+2050,Wages Payable,Liability
+2055,Payroll Accrual,Liability
+2100,VAT Payable (Output VAT),Liability
+2110,VAT Control / Net VAT,Liability
+2120,VAT Payable - Reverse Charge,Liability
+2125,VAT Payable - Imports (PVA),Liability
+2200,PAYE / NIC Payable,Liability
+2210,Other Payroll Deductions,Liability
+2220,Pension Payable,Liability
+2230,Student Loan / Statutory Deductions Payable,Liability
+2240,Benefits-in-Kind / PSA Payable,Liability
+2300,Corporation Tax Payable,Liability
+2310,Corporation Tax Provision / Accrual,Liability
+2350,Deferred Tax Liability,Liability
+2400,Loans Payable - Current,Liability
+2410,Loans Payable - Long Term,Liability
+2420,Lease Liability - Current,Liability
+2430,Lease Liability - Long Term,Liability
+2440,Interest Payable,Liability
+2450,Loan Arrangement Fees Payable,Liability
+2500,Director’s Loan (Credit),Liability
+2600,Intercompany Payable,Liability
+2700,Dividends Payable,Liability
+2710,Director Remuneration Payable,Liability
+2800,Provisions - Onerous Contracts,Liability
+2810,Provisions - Warranties,Liability
+2820,Provisions - Legal / Disputes,Liability
+2830,Provisions - Other,Liability
+2900,Suspense / Clearing (Liability),Liability
+2910,Unallocated Receipts / Allocation Clearing,Liability
+3000,Share Capital,Equity
+3100,Share Premium,Equity
+3200,Retained Earnings (Brought Forward),Equity
+3300,Current Year Profit/Loss,Equity
+3400,Dividends / Drawings,Equity
+3500,Capital Introduced,Equity
+3600,Revaluation Reserve,Equity
+3610,Foreign Currency Translation Reserve,Equity
+3620,Share-based Payment Reserve,Equity
+3630,Other Reserves,Equity
+3900,Prior Year Adjustments,Equity
+4000,Sales - Services,Income
+4010,Sales - Products,Income
+4020,Sales - Installation / Labour,Income
+4030,Sales - Consultancy,Income
+4040,Sales - Maintenance,Income
+4050,Sales - Shipping / Delivery Charged,Income
+4060,Sales - Grants / Subsidy Income,Income
+4070,Sales - Other,Income
+4080,Sales Returns,Income
+4085,Sales Discounts,Income
+4090,Sales Discounts / Returns,Income
+4200,Other Income - Commission,Income
+4210,Other Income - Interest Received,Income
+4220,Other Income - Refunds,Income
+4230,Other Income - Miscellaneous,Income
+4300,Sales - Category 01,Income
+4301,Sales - Category 02,Income
+4302,Sales - Category 03,Income
+4303,Sales - Category 04,Income
+4304,Sales - Category 05,Income
+4305,Sales - Category 06,Income
+4306,Sales - Category 07,Income
+4307,Sales - Category 08,Income
+4308,Sales - Category 09,Income
+4309,Sales - Category 10,Income
+4310,Sales - Category 11,Income
+4311,Sales - Category 12,Income
+4312,Sales - Category 13,Income
+4313,Sales - Category 14,Income
+4314,Sales - Category 15,Income
+4315,Sales - Category 16,Income
+4316,Sales - Category 17,Income
+4317,Sales - Category 18,Income
+4318,Sales - Category 19,Income
+4319,Sales - Category 20,Income
+4320,Sales - Category 21,Income
+4321,Sales - Category 22,Income
+4322,Sales - Category 23,Income
+4323,Sales - Category 24,Income
+4324,Sales - Category 25,Income
+4325,Sales - Category 26,Income
+4326,Sales - Category 27,Income
+4327,Sales - Category 28,Income
+4328,Sales - Category 29,Income
+4329,Sales - Category 30,Income
+4330,Sales - Category 31,Income
+4331,Sales - Category 32,Income
+4332,Sales - Category 33,Income
+4333,Sales - Category 34,Income
+4334,Sales - Category 35,Income
+4335,Sales - Category 36,Income
+4336,Sales - Category 37,Income
+4337,Sales - Category 38,Income
+4338,Sales - Category 39,Income
+4339,Sales - Category 40,Income
+4340,Sales - Category 41,Income
+4341,Sales - Category 42,Income
+4342,Sales - Category 43,Income
+4343,Sales - Category 44,Income
+4344,Sales - Category 45,Income
+4345,Sales - Category 46,Income
+4346,Sales - Category 47,Income
+4347,Sales - Category 48,Income
+4348,Sales - Category 49,Income
+4349,Sales - Category 50,Income
+4350,Sales - Category 51,Income
+4351,Sales - Category 52,Income
+4352,Sales - Category 53,Income
+4353,Sales - Category 54,Income
+4354,Sales - Category 55,Income
+4355,Sales - Category 56,Income
+4356,Sales - Category 57,Income
+4357,Sales - Category 58,Income
+4358,Sales - Category 59,Income
+4359,Sales - Category 60,Income
+4360,Sales - Category 61,Income
+4361,Sales - Category 62,Income
+4362,Sales - Category 63,Income
+4363,Sales - Category 64,Income
+4364,Sales - Category 65,Income
+4365,Sales - Category 66,Income
+4366,Sales - Category 67,Income
+4367,Sales - Category 68,Income
+4368,Sales - Category 69,Income
+4369,Sales - Category 70,Income
+4370,Sales - Category 71,Income
+4371,Sales - Category 72,Income
+4372,Sales - Category 73,Income
+4373,Sales - Category 74,Income
+4374,Sales - Category 75,Income
+4375,Sales - Category 76,Income
+4376,Sales - Category 77,Income
+4377,Sales - Category 78,Income
+4378,Sales - Category 79,Income
+4379,Sales - Category 80,Income
+4380,Sales - Category 81,Income
+4381,Sales - Category 82,Income
+4382,Sales - Category 83,Income
+4383,Sales - Category 84,Income
+4384,Sales - Category 85,Income
+4385,Sales - Category 86,Income
+4386,Sales - Category 87,Income
+4387,Sales - Category 88,Income
+4388,Sales - Category 89,Income
+4389,Sales - Category 90,Income
+4390,Sales - Category 91,Income
+4391,Sales - Category 92,Income
+4392,Sales - Category 93,Income
+4393,Sales - Category 94,Income
+4394,Sales - Category 95,Income
+4395,Sales - Category 96,Income
+4396,Sales - Category 97,Income
+4397,Sales - Category 98,Income
+4398,Sales - Category 99,Income
+4399,Sales - Category 100,Income
+5000,Cost of Sales - Materials,Expense
+5010,Cost of Sales - Subcontractors,Expense
+5020,Cost of Sales - Direct Labour,Expense
+5030,Cost of Sales - Freight / Shipping,Expense
+5040,Cost of Sales - Other Direct Costs,Expense
+5050,Cost of Sales - Stock Adjustments,Expense
+5060,Cost of Sales - Stock Write-down / Obsolescence,Expense
+5070,Cost of Sales - Purchase Price Variance,Expense
+6000,Advertising & Marketing,Expense
+6010,Website / Hosting / Domains,Expense
+6020,Software Subscriptions,Expense
+6030,Telephone & Internet,Expense
+6040,Postage & Courier,Expense
+6050,Printing & Stationery,Expense
+6060,Professional Fees - Accountancy,Expense
+6070,Professional Fees - Legal,Expense
+6080,Professional Fees - Consultancy,Expense
+6090,Bank Charges,Expense
+6095,Merchant Fees,Expense
+6096,Foreign Exchange Fees,Expense
+6100,Insurance,Expense
+6110,Rent,Expense
+6120,Utilities,Expense
+6130,Repairs & Maintenance,Expense
+6140,Vehicle Fuel,Expense
+6150,Vehicle Maintenance,Expense
+6160,Vehicle Insurance / Tax,Expense
+6170,Travel & Accommodation,Expense
+6180,Meals (Business),Expense
+6190,Training & Courses,Expense
+6200,Wages & Salaries,Expense
+6210,Employer NIC,Expense
+6220,Pension Contributions (Employer),Expense
+6230,Staff Benefits,Expense
+6240,Recruitment Costs,Expense
+6250,Office Supplies,Expense
+6260,Equipment - Small Tools,Expense
+6270,Depreciation,Expense
+6280,Amortisation,Expense
+6290,Bad Debts,Expense
+6300,Donations,Expense
+6310,Subscriptions & Memberships,Expense
+6320,Health & Safety,Expense
+6330,PPE / Protective Clothing,Expense
+6340,Storage / Warehouse,Expense
+6350,IT Hardware,Expense
+6360,Cleaning,Expense
+6370,Security,Expense
+6380,Licences & Permits,Expense
+6390,Sundry Expenses,Expense
+6400,Expense - Reserved 6400,Expense
+6401,Expense - Reserved 6401,Expense
+6402,Expense - Reserved 6402,Expense
+6403,Expense - Reserved 6403,Expense
+6404,Expense - Reserved 6404,Expense
+6405,Expense - Reserved 6405,Expense
+6406,Expense - Reserved 6406,Expense
+6407,Expense - Reserved 6407,Expense
+6408,Expense - Reserved 6408,Expense
+6409,Expense - Reserved 6409,Expense
+6410,Expense - Reserved 6410,Expense
+6411,Expense - Reserved 6411,Expense
+6412,Expense - Reserved 6412,Expense
+6413,Expense - Reserved 6413,Expense
+6414,Expense - Reserved 6414,Expense
+6415,Expense - Reserved 6415,Expense
+6416,Expense - Reserved 6416,Expense
+6417,Expense - Reserved 6417,Expense
+6418,Expense - Reserved 6418,Expense
+6419,Expense - Reserved 6419,Expense
+6420,Expense - Reserved 6420,Expense
+6421,Expense - Reserved 6421,Expense
+6422,Expense - Reserved 6422,Expense
+6423,Expense - Reserved 6423,Expense
+6424,Expense - Reserved 6424,Expense
+6425,Expense - Reserved 6425,Expense
+6426,Expense - Reserved 6426,Expense
+6427,Expense - Reserved 6427,Expense
+6428,Expense - Reserved 6428,Expense
+6429,Expense - Reserved 6429,Expense
+6430,Expense - Reserved 6430,Expense
+6431,Expense - Reserved 6431,Expense
+6432,Expense - Reserved 6432,Expense
+6433,Expense - Reserved 6433,Expense
+6434,Expense - Reserved 6434,Expense
+6435,Expense - Reserved 6435,Expense
+6436,Expense - Reserved 6436,Expense
+6437,Expense - Reserved 6437,Expense
+6438,Expense - Reserved 6438,Expense
+6439,Expense - Reserved 6439,Expense
+6440,Expense - Reserved 6440,Expense
+6441,Expense - Reserved 6441,Expense
+6442,Expense - Reserved 6442,Expense
+6443,Expense - Reserved 6443,Expense
+6444,Expense - Reserved 6444,Expense
+6445,Expense - Reserved 6445,Expense
+6446,Expense - Reserved 6446,Expense
+6447,Expense - Reserved 6447,Expense
+6448,Expense - Reserved 6448,Expense
+6449,Expense - Reserved 6449,Expense
+6450,Expense - Reserved 6450,Expense
+6451,Expense - Reserved 6451,Expense
+6452,Expense - Reserved 6452,Expense
+6453,Expense - Reserved 6453,Expense
+6454,Expense - Reserved 6454,Expense
+6455,Expense - Reserved 6455,Expense
+6456,Expense - Reserved 6456,Expense
+6457,Expense - Reserved 6457,Expense
+6458,Expense - Reserved 6458,Expense
+6459,Expense - Reserved 6459,Expense
+6460,Expense - Reserved 6460,Expense
+6461,Expense - Reserved 6461,Expense
+6462,Expense - Reserved 6462,Expense
+6463,Expense - Reserved 6463,Expense
+6464,Expense - Reserved 6464,Expense
+6465,Expense - Reserved 6465,Expense
+6466,Expense - Reserved 6466,Expense
+6467,Expense - Reserved 6467,Expense
+6468,Expense - Reserved 6468,Expense
+6469,Expense - Reserved 6469,Expense
+6470,Expense - Reserved 6470,Expense
+6471,Expense - Reserved 6471,Expense
+6472,Expense - Reserved 6472,Expense
+6473,Expense - Reserved 6473,Expense
+6474,Expense - Reserved 6474,Expense
+6475,Expense - Reserved 6475,Expense
+6476,Expense - Reserved 6476,Expense
+6477,Expense - Reserved 6477,Expense
+6478,Expense - Reserved 6478,Expense
+6479,Expense - Reserved 6479,Expense
+6480,Expense - Reserved 6480,Expense
+6481,Expense - Reserved 6481,Expense
+6482,Expense - Reserved 6482,Expense
+6483,Expense - Reserved 6483,Expense
+6484,Expense - Reserved 6484,Expense
+6485,Expense - Reserved 6485,Expense
+6486,Expense - Reserved 6486,Expense
+6487,Expense - Reserved 6487,Expense
+6488,Expense - Reserved 6488,Expense
+6489,Expense - Reserved 6489,Expense
+6490,Expense - Reserved 6490,Expense
+6491,Expense - Reserved 6491,Expense
+6492,Expense - Reserved 6492,Expense
+6493,Expense - Reserved 6493,Expense
+6494,Expense - Reserved 6494,Expense
+6495,Expense - Reserved 6495,Expense
+6496,Expense - Reserved 6496,Expense
+6497,Expense - Reserved 6497,Expense
+6498,Expense - Reserved 6498,Expense
+6499,Expense - Reserved 6499,Expense
+6500,Expense - Reserved 6500,Expense
+6501,Expense - Reserved 6501,Expense
+6502,Expense - Reserved 6502,Expense
+6503,Expense - Reserved 6503,Expense
+6504,Expense - Reserved 6504,Expense
+6505,Expense - Reserved 6505,Expense
+6506,Expense - Reserved 6506,Expense
+6507,Expense - Reserved 6507,Expense
+6508,Expense - Reserved 6508,Expense
+6509,Expense - Reserved 6509,Expense
+6510,Expense - Reserved 6510,Expense
+6511,Expense - Reserved 6511,Expense
+6512,Expense - Reserved 6512,Expense
+6513,Expense - Reserved 6513,Expense
+6514,Expense - Reserved 6514,Expense
+6515,Expense - Reserved 6515,Expense
+6516,Expense - Reserved 6516,Expense
+6517,Expense - Reserved 6517,Expense
+6518,Expense - Reserved 6518,Expense
+6519,Expense - Reserved 6519,Expense
+6520,Expense - Reserved 6520,Expense
+6521,Expense - Reserved 6521,Expense
+6522,Expense - Reserved 6522,Expense
+6523,Expense - Reserved 6523,Expense
+6524,Expense - Reserved 6524,Expense
+6525,Expense - Reserved 6525,Expense
+6526,Expense - Reserved 6526,Expense
+6527,Expense - Reserved 6527,Expense
+6528,Expense - Reserved 6528,Expense
+6529,Expense - Reserved 6529,Expense
+6530,Expense - Reserved 6530,Expense
+6531,Expense - Reserved 6531,Expense
+6532,Expense - Reserved 6532,Expense
+6533,Expense - Reserved 6533,Expense
+6534,Expense - Reserved 6534,Expense
+6535,Expense - Reserved 6535,Expense
+6536,Expense - Reserved 6536,Expense
+6537,Expense - Reserved 6537,Expense
+6538,Expense - Reserved 6538,Expense
+6539,Expense - Reserved 6539,Expense
+6540,Expense - Reserved 6540,Expense
+6541,Expense - Reserved 6541,Expense
+6542,Expense - Reserved 6542,Expense
+6543,Expense - Reserved 6543,Expense
+6544,Expense - Reserved 6544,Expense
+6545,Expense - Reserved 6545,Expense
+6546,Expense - Reserved 6546,Expense
+6547,Expense - Reserved 6547,Expense
+6548,Expense - Reserved 6548,Expense
+6549,Expense - Reserved 6549,Expense
+6550,Expense - Reserved 6550,Expense
+6551,Expense - Reserved 6551,Expense
+6552,Expense - Reserved 6552,Expense
+6553,Expense - Reserved 6553,Expense
+6554,Expense - Reserved 6554,Expense
+6555,Expense - Reserved 6555,Expense
+6556,Expense - Reserved 6556,Expense
+6557,Expense - Reserved 6557,Expense
+6558,Expense - Reserved 6558,Expense
+6559,Expense - Reserved 6559,Expense
+6560,Expense - Reserved 6560,Expense
+6561,Expense - Reserved 6561,Expense
+6562,Expense - Reserved 6562,Expense
+6563,Expense - Reserved 6563,Expense
+6564,Expense - Reserved 6564,Expense
+6565,Expense - Reserved 6565,Expense
+6566,Expense - Reserved 6566,Expense
+6567,Expense - Reserved 6567,Expense
+6568,Expense - Reserved 6568,Expense
+6569,Expense - Reserved 6569,Expense
+6570,Expense - Reserved 6570,Expense
+6571,Expense - Reserved 6571,Expense
+6572,Expense - Reserved 6572,Expense
+6573,Expense - Reserved 6573,Expense
+6574,Expense - Reserved 6574,Expense
+6575,Expense - Reserved 6575,Expense
+6576,Expense - Reserved 6576,Expense
+6577,Expense - Reserved 6577,Expense
+6578,Expense - Reserved 6578,Expense
+6579,Expense - Reserved 6579,Expense
+6580,Expense - Reserved 6580,Expense
+6581,Expense - Reserved 6581,Expense
+6582,Expense - Reserved 6582,Expense
+6583,Expense - Reserved 6583,Expense
+6584,Expense - Reserved 6584,Expense
+6585,Expense - Reserved 6585,Expense
+6586,Expense - Reserved 6586,Expense
+6587,Expense - Reserved 6587,Expense
+6588,Expense - Reserved 6588,Expense
+6589,Expense - Reserved 6589,Expense
+6590,Expense - Reserved 6590,Expense
+6591,Expense - Reserved 6591,Expense
+6592,Expense - Reserved 6592,Expense
+6593,Expense - Reserved 6593,Expense
+6594,Expense - Reserved 6594,Expense
+6595,Expense - Reserved 6595,Expense
+6596,Expense - Reserved 6596,Expense
+6597,Expense - Reserved 6597,Expense
+6598,Expense - Reserved 6598,Expense
+6599,Expense - Reserved 6599,Expense
+7000,Corporation Tax Expense,Expense
+7010,Deferred Tax Expense / Income,Expense
+7020,VAT - Irrecoverable,Expense
+7025,VAT - Surcharges / Penalties,Expense
+9000,Other Expense - Interest Paid,Expense
+9005,Other Income - Interest Received,Income
+9010,Other Expense - Penalties & Fines,Expense
+9015,Other Income - Foreign Exchange Gains,Income
+9025,Other Income - Recharges / Rechargeable Costs,Income
+9030,Other Income - Commission / Referral Income,Income
+9035,Other Expense - Foreign Exchange Losses,Expense
+9040,Other Income - Rental / Hire Income,Income
+9050,Other Income - Grants (Non-trading),Income
+9100,Other Income - Gain on Disposal,Income
+9200,Other Expense - Loss on Disposal,Expense
+9900,Rounding,Expense

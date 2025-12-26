@@ -1,0 +1,602 @@
+{
+  "version": "1.0.0",
+  "name": "CCC Chart of Accounts Rules",
+  "generated_at": "2025-12-17T13:00:00Z",
+  "precedence": [
+    "explicit",
+    "deterministic",
+    "heuristic",
+    "null"
+  ],
+  "policy": {
+    "no_post_to_parents": true,
+    "block_manual_posting_to_control_accounts": true,
+    "allow_control_adjustments": true,
+    "control_adjustment_entry_types": [
+      "CONTROL_ADJUSTMENT_AR",
+      "CONTROL_ADJUSTMENT_AP",
+      "CONTROL_ADJUSTMENT_VAT",
+      "CONTROL_ADJUSTMENT_PAYROLL",
+      "CONTROL_ADJUSTMENT_CLEARING"
+    ],
+    "require_source_document_for_control_adjustments": true,
+    "effective_date_enforced": true,
+    "date_format": "ISO_8601_DATE",
+    "timestamp_format": "ISO_8601_UTC"
+  },
+  "account_schema": {
+    "fields": [
+      {
+        "name": "code",
+        "type": "int",
+        "required": true,
+        "description": "Unique account code"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "Account display name"
+      },
+      {
+        "name": "type",
+        "type": "enum",
+        "required": true,
+        "values": [
+          "Asset",
+          "Liability",
+          "Equity",
+          "Income",
+          "Expense"
+        ],
+        "description": "Accounting class"
+      },
+      {
+        "name": "parent_code",
+        "type": "int|null",
+        "required": false,
+        "description": "Hierarchy parent account code"
+      },
+      {
+        "name": "statement",
+        "type": "enum",
+        "required": true,
+        "values": [
+          "BS",
+          "PL"
+        ],
+        "description": "Financial statement bucket"
+      },
+      {
+        "name": "section",
+        "type": "string",
+        "required": true,
+        "description": "High-level reporting section"
+      },
+      {
+        "name": "report_line",
+        "type": "string",
+        "required": true,
+        "description": "Line item mapping used for statements"
+      },
+      {
+        "name": "normal_balance",
+        "type": "enum",
+        "required": true,
+        "values": [
+          "DR",
+          "CR"
+        ],
+        "description": "Normal balance direction"
+      },
+      {
+        "name": "is_contra",
+        "type": "bool",
+        "required": true,
+        "description": "Contra account flag"
+      },
+      {
+        "name": "contra_to",
+        "type": "int|null",
+        "required": false,
+        "description": "Account code this contra nets against (presentation)"
+      },
+      {
+        "name": "is_control",
+        "type": "bool",
+        "required": true,
+        "description": "Control account (owned by subledger/module)"
+      },
+      {
+        "name": "subledger",
+        "type": "enum|null",
+        "required": false,
+        "values": [
+          "AR",
+          "AP",
+          "VAT",
+          "PAYROLL",
+          "CLEARING"
+        ],
+        "description": "Owning subledger/module"
+      },
+      {
+        "name": "posting_allowed",
+        "type": "bool",
+        "required": true,
+        "description": "Whether manual postings are allowed"
+      },
+      {
+        "name": "tags",
+        "type": "string",
+        "required": false,
+        "description": "Comma-separated tags used for automation"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": true,
+        "values": [
+          "active",
+          "inactive"
+        ],
+        "description": "Lifecycle status"
+      },
+      {
+        "name": "effective_from",
+        "type": "date",
+        "required": true,
+        "description": "First date postings are allowed"
+      },
+      {
+        "name": "effective_to",
+        "type": "date|null",
+        "required": false,
+        "description": "Last date postings are allowed (null = open)"
+      }
+    ]
+  },
+  "defaults": {
+    "status": "active",
+    "posting_allowed": true,
+    "effective_from": "on_create_date",
+    "effective_to": null
+  },
+  "deterministic_rules": [
+    {
+      "id": "DEF-STATEMENT",
+      "description": "Derive statement from type",
+      "when": "statement is null",
+      "set": {
+        "BS": [
+          "Asset",
+          "Liability",
+          "Equity"
+        ],
+        "PL": [
+          "Income",
+          "Expense"
+        ]
+      }
+    },
+    {
+      "id": "DEF-NORMAL-BALANCE",
+      "description": "Derive normal balance from type, then flip if contra",
+      "when": "normal_balance is null",
+      "set": {
+        "DR": [
+          "Asset",
+          "Expense"
+        ],
+        "CR": [
+          "Liability",
+          "Equity",
+          "Income"
+        ]
+      },
+      "then_if": {
+        "is_contra": true,
+        "flip": "DR<->CR"
+      }
+    },
+    {
+      "id": "DEF-POSTING-ALLOWED",
+      "description": "Block posting to reserved/header/parent accounts",
+      "when": "posting_allowed is null",
+      "logic": {
+        "set_false_if": {
+          "name_contains_any": [
+            "reserved",
+            "header",
+            "total"
+          ],
+          "code_ranges": [
+            {
+              "from": 6400,
+              "to": 6599
+            }
+          ],
+          "is_parent_account": true
+        }
+      }
+    }
+  ],
+  "heuristic_rules": [
+    {
+      "id": "TAG-INFERENCE",
+      "description": "Infer tags from name patterns and ranges",
+      "notes": "Heuristics never override explicit tags; mark account needs_review when inferred.",
+      "patterns": [
+        {
+          "tag": "vat",
+          "if_name_contains": [
+            "vat"
+          ]
+        },
+        {
+          "tag": "reverse_charge",
+          "if_name_contains": [
+            "reverse charge"
+          ]
+        },
+        {
+          "tag": "import_vat",
+          "if_name_contains": [
+            "import",
+            "pva"
+          ]
+        },
+        {
+          "tag": "payroll",
+          "if_name_contains": [
+            "paye",
+            "nic",
+            "pension",
+            "payroll",
+            "wages",
+            "salar"
+          ]
+        },
+        {
+          "tag": "clearing",
+          "if_name_contains": [
+            "clearing",
+            "undeposited",
+            "in transit",
+            "pending"
+          ]
+        },
+        {
+          "tag": "fx",
+          "if_name_contains": [
+            "foreign exchange",
+            "foreign currency",
+            "fx"
+          ]
+        },
+        {
+          "tag": "inventory",
+          "if_name_contains": [
+            "inventory",
+            "stock"
+          ]
+        },
+        {
+          "tag": "depreciation",
+          "if_name_contains": [
+            "depreciation"
+          ]
+        },
+        {
+          "tag": "amortisation",
+          "if_name_contains": [
+            "amortisation",
+            "amortization"
+          ]
+        },
+        {
+          "tag": "bad_debt",
+          "if_name_contains": [
+            "bad debt",
+            "bad debts"
+          ]
+        },
+        {
+          "tag": "corp_tax",
+          "if_name_contains": [
+            "corporation tax"
+          ]
+        },
+        {
+          "tag": "deferred_tax",
+          "if_name_contains": [
+            "deferred tax"
+          ]
+        },
+        {
+          "tag": "intercompany",
+          "if_name_contains": [
+            "intercompany"
+          ]
+        },
+        {
+          "tag": "merchant_fee",
+          "if_name_contains": [
+            "merchant fee"
+          ]
+        }
+      ],
+      "range_tags": [
+        {
+          "tag": "revenue",
+          "codes": {
+            "from": 4000,
+            "to": 4999
+          }
+        },
+        {
+          "tag": "cos",
+          "codes": {
+            "from": 5000,
+            "to": 5099
+          }
+        }
+      ]
+    },
+    {
+      "id": "CONTROL-INFERENCE",
+      "description": "Infer control/subledger from tags and known codes",
+      "logic": [
+        {
+          "if_code_in": [
+            1100
+          ],
+          "set": {
+            "is_control": true,
+            "subledger": "AR"
+          },
+          "add_tags": [
+            "ar_control"
+          ]
+        },
+        {
+          "if_code_in": [
+            2000
+          ],
+          "set": {
+            "is_control": true,
+            "subledger": "AP"
+          },
+          "add_tags": [
+            "ap_control"
+          ]
+        },
+        {
+          "if_tag_in": [
+            "vat"
+          ],
+          "set": {
+            "is_control": true,
+            "subledger": "VAT"
+          },
+          "add_tags": [
+            "vat_control"
+          ]
+        },
+        {
+          "if": {
+            "tag": "payroll",
+            "type": "Liability"
+          },
+          "set": {
+            "is_control": true,
+            "subledger": "PAYROLL"
+          },
+          "add_tags": [
+            "payroll_control"
+          ]
+        },
+        {
+          "if": {
+            "tag": "clearing",
+            "type": "Asset"
+          },
+          "set": {
+            "is_control": true,
+            "subledger": "CLEARING"
+          },
+          "add_tags": [
+            "clearing_control"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "REPORT-MAP-INITIAL",
+      "description": "Initial section/report_line mapping from code ranges and tags (editable).",
+      "notes": "CCC should allow multiple mapping views (statutory vs management) without changing CoA rows."
+    }
+  ],
+  "validation_rules": [
+    {
+      "id": "COA-001",
+      "name": "Unique account code",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "all codes unique"
+    },
+    {
+      "id": "COA-002",
+      "name": "Valid account type",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "type in {Asset,Liability,Equity,Income,Expense}"
+    },
+    {
+      "id": "COA-003",
+      "name": "Parent exists",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "if parent_code not null then parent_code exists"
+    },
+    {
+      "id": "COA-004",
+      "name": "No parent cycles",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "graph(parent_code) has no cycles"
+    },
+    {
+      "id": "COA-005",
+      "name": "Statement consistent with type",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "(type in {Asset,Liability,Equity} => statement=BS) AND (type in {Income,Expense} => statement=PL)"
+    },
+    {
+      "id": "COA-006",
+      "name": "Normal balance consistent",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "normal_balance matches type unless is_contra=true (then flipped)"
+    },
+    {
+      "id": "COA-007",
+      "name": "Contra requires link",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "if is_contra=true then contra_to not null and contra_to exists"
+    },
+    {
+      "id": "COA-008",
+      "name": "Control requires subledger",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "if is_control=true then subledger in {AR,AP,VAT,PAYROLL,CLEARING}"
+    },
+    {
+      "id": "COA-009",
+      "name": "Reserved accounts not posting",
+      "severity": "BLOCK",
+      "scope": "chart",
+      "check": "if code in 6400..6599 or name contains 'reserved' then posting_allowed=false"
+    },
+    {
+      "id": "JNL-001",
+      "name": "Journal balances",
+      "severity": "BLOCK",
+      "scope": "journal",
+      "check": "sum(debits)=sum(credits) per journal"
+    },
+    {
+      "id": "JNL-002",
+      "name": "Effective date enforced",
+      "severity": "BLOCK",
+      "scope": "journal",
+      "check": "posting_date between effective_from and effective_to (if set) AND status=active"
+    },
+    {
+      "id": "JNL-003",
+      "name": "Manual posting blocked to control accounts",
+      "severity": "BLOCK",
+      "scope": "journal",
+      "check": "if account.is_control=true then entry_source must be owning module OR entry_type in control_adjustment_entry_types"
+    },
+    {
+      "id": "JNL-004",
+      "name": "No posting to parent accounts",
+      "severity": "BLOCK",
+      "scope": "journal",
+      "check": "if policy.no_post_to_parents=true and account has children then posting not allowed"
+    },
+    {
+      "id": "JNL-005",
+      "name": "Tag-required fields present",
+      "severity": "BLOCK",
+      "scope": "journal",
+      "check": "if account has tag then journal_line contains required fields for that tag"
+    },
+    {
+      "id": "SCAN-001",
+      "name": "Abnormal balance scan",
+      "severity": "WARN",
+      "scope": "period_close",
+      "check": "accounts with balances opposite to normal_balance beyond threshold are flagged"
+    }
+  ],
+  "tag_required_fields": {
+    "vat": [
+      "vat_code",
+      "tax_point_date"
+    ],
+    "payroll": [
+      "payrun_id"
+    ],
+    "clearing": [
+      "settlement_id"
+    ],
+    "depreciation": [
+      "fixed_asset_class"
+    ],
+    "amortisation": [
+      "intangible_class"
+    ],
+    "intercompany": [
+      "counterparty_entity_id"
+    ],
+    "fx": [
+      "fx_rate_source",
+      "fx_rate_date"
+    ]
+  },
+  "subledger_tieouts": [
+    {
+      "id": "TIE-AR-001",
+      "severity": "BLOCK",
+      "description": "AR control equals open customer positions",
+      "control_account_code": 1100,
+      "formula": "AR_control_balance == sum(open_invoices - open_credit_notes - unallocated_receipts)"
+    },
+    {
+      "id": "TIE-AP-001",
+      "severity": "BLOCK",
+      "description": "AP control equals open supplier positions",
+      "control_account_code": 2000,
+      "formula": "AP_control_balance == sum(open_bills - open_supplier_credits - unallocated_payments)"
+    },
+    {
+      "id": "TIE-VAT-001",
+      "severity": "BLOCK",
+      "description": "VAT control equals VAT return calc (if VAT module enabled)",
+      "control_account_codes": [
+        1200,
+        2100,
+        2110
+      ],
+      "formula": "VAT_control_balance == vat_return_net"
+    },
+    {
+      "id": "TIE-CLEAR-001",
+      "severity": "BLOCK",
+      "description": "Clearing accounts tie to settlement reports",
+      "subledger": "CLEARING",
+      "formula": "clearing_balance == sum(unmatched_settlements)"
+    }
+  ],
+  "audit_trail": {
+    "required_line_fields": [
+      "journal_id",
+      "line_id",
+      "posting_date",
+      "account_code",
+      "debit",
+      "credit",
+      "currency",
+      "source_doc_type",
+      "source_doc_id",
+      "narrative"
+    ],
+    "hash": "SHA-256",
+    "hash_scope": "per_journal"
+  }
+}

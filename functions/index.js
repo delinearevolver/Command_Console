@@ -490,6 +490,8 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
 
   const { baseUrl, seller } = buildLedgerConfig();
   const invoiceRef = event.data.after.ref;
+  const invoice = event.data.after.data();
+  const db = getFirestore();
 
   if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
     functions.logger.warn('Ledger API base URL not configured; skipping sync.', { invoiceId: event.params.invoiceId });
@@ -501,7 +503,43 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
     return;
   }
 
-  const invoice = event.data.after.data();
+  const currentStatus = invoice?.syncStatus;
+  const needsSync = invoice?.needsSync === true;
+  const readyToSync = needsSync || !currentStatus || currentStatus === 'pending';
+
+  if (!readyToSync) {
+    functions.logger.info('Skipping ledger sync: not in ready state', {
+      invoiceId: event.params.invoiceId,
+      syncStatus: currentStatus,
+      ledgerInvoiceId: invoice.ledgerInvoiceId,
+    });
+    return;
+  }
+
+  let lockAcquired = false;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(invoiceRef);
+    const doc = snap.exists ? snap.data() : {};
+    const status = doc?.syncStatus;
+    const docNeedsSync = doc?.needsSync === true;
+    const docReady = docNeedsSync || !status || status === 'pending';
+    if (!docReady) {
+      return;
+    }
+    tx.set(invoiceRef, {
+      syncStatus: 'syncing',
+      syncMessage: 'Posting to ledger',
+    }, { merge: true });
+    lockAcquired = true;
+  });
+
+  if (!lockAcquired) {
+    functions.logger.info('Skipping ledger sync: lock not acquired (another sync in-flight or already synced)', {
+      invoiceId: event.params.invoiceId,
+    });
+    return;
+  }
+
   const invoiceId = (invoice.invoiceId || invoice.reference || event.params.invoiceId || '').toString().trim();
   const invoiceReference = invoice.reference || invoice.invoiceId || invoiceId;
   const issueDate = invoice.issueDate || new Date().toISOString().slice(0, 10);
@@ -659,6 +697,12 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
   if (dueDate) {
   }
 
+  const headers = { 'Content-Type': 'application/json' };
+  if (process.env.LEDGER_API_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.LEDGER_API_TOKEN}`;
+  }
+  headers['Idempotency-Key'] = invoiceReference || event.params.invoiceId;
+
   functions.logger.info('Posting invoice to ledger', {
     invoiceId: payload.invoice.id,
     apiUrl: trimTrailingSlash(baseUrl) + '/invoices',
@@ -669,7 +713,7 @@ exports.syncInvoiceToLedger = onDocumentWritten('invoices/{invoiceId}', async (e
   try {
     const response = await fetch(trimTrailingSlash(baseUrl) + '/invoices', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
 
